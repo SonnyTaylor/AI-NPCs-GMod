@@ -1,8 +1,9 @@
 {
-    "title": "My GMod Addon",
-    "description": "",
-    "type": "servercontent",
+    "title": "ChatGPT NPCs",
+    "description": "Allows you to spawn NPCs that you can talk to using ChatGPT",
+    "type": "npc",
     "tags": [
+        "realism",
         "fun"
     ],
     "ignore": [
