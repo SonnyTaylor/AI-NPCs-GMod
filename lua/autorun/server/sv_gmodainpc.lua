@@ -1,27 +1,27 @@
-
 -- Add network strings for communication between client and server
-util.AddNetworkString( "SendAPIKey" )
-util.AddNetworkString( "SendPersonality" )
-util.AddNetworkString( "SendSelectedNPC" )
+util.AddNetworkString("SendAPIKey")
+util.AddNetworkString("SendPersonality")
+util.AddNetworkString("SendSelectedNPC")
 
 local personality
 local selectedNPC
+local isAISpawned = false -- Flag to track whether AI NPC is already spawned
+local spawnedNPC -- Variable to store the reference to the spawned NPC
 
 -- Receive API key from client
-net.Receive( "SendAPIKey", function( len, ply )
+net.Receive("SendAPIKey", function(len, ply)
     apiKey = net.ReadString()
-    print( "API key received: ".. apiKey )
+    print("API key received: " .. apiKey)
     _G.apiKey = apiKey -- Set the API key in the Global table
-end )
-
-local apikey = _G.apiKey
+end)
 
 -- Receive personality from client
-net.Receive( "SendPersonality", function( len, ply )
+net.Receive("SendPersonality", function(len, ply)
     personality = net.ReadString()
-    print( "Personality received: ".. personality )
-    _G.personality = "it is your job to act like this personality: "..personality .."if you understand, respond with a hello in character" -- Set the personality in the Global table
-end )
+    print("Personality received: " .. personality)
+    _G.personality = "it is your job to act like this personality: " .. personality .. "if you understand, respond with a hello in character and keep it short" -- Set the personality in the Global table
+    _G.personalitynohello = "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all and keep it short: " .. personality
+end)
 
 -- Define SpawnNPC function
 function SpawnNPC(pos, ang, npcClass)
@@ -32,14 +32,28 @@ function SpawnNPC(pos, ang, npcClass)
     npc:SetAngles(ang)
     npc:Spawn()
 
+    -- Set up a hook for the NPC's death event
+    hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)
+        if npc == spawnedNPC then
+            isAISpawned = false
+            print("AI NPC died or was despawned.")
+            hook.Remove("OnNPCKilled", "OnAIDeath") -- Remove the hook after processing
+        end
+    end)
+
     return npc
 end
 
 -- Receive selected NPC from client
 net.Receive("SendSelectedNPC", function(len, ply)
+    if isAISpawned then
+        ply:ChatPrint("AI NPC is already spawned.")
+        return
+    end
+
     local selectedNPC = net.ReadString()
     print("Selected NPC received: " .. selectedNPC)
-    
+
     -- Calculate spawn position in front of the player
     local spawnPosition = ply:GetEyeTrace().HitPos
 
@@ -47,19 +61,25 @@ net.Receive("SendSelectedNPC", function(len, ply)
     local spawnAngle = Angle(0, math.random(0, 360), 0)
 
     -- Spawn the selected NPC with the random angle
-    local spawnedNPC = SpawnNPC(spawnPosition, spawnAngle, selectedNPC)
-    
+    spawnedNPC = SpawnNPC(spawnPosition, spawnAngle, selectedNPC)
+
     if IsValid(spawnedNPC) then
         print("NPC spawned successfully!")
+        isAISpawned = true
+
+        -- Enable navigation for the NPC
+        spawnedNPC:SetNPCState(NPC_STATE_SCRIPT)
+        spawnedNPC:SetSchedule(SCHED_IDLE_STAND)
+
+        -- Walk to the player
+        spawnedNPC:SetLastPosition(ply:GetPos())
+        spawnedNPC:SetSchedule(SCHED_FORCED_GO_RUN)
     else
         print("Failed to spawn NPC.")
     end
 
     ply:sendGPTRequest(_G.personality)
-
 end)
-
-
 
 -- Find the metatable for the Player type
 local meta = FindMetaTable("Player")
@@ -91,7 +111,7 @@ meta.sendGPTRequest = function(this, text)
                 local gptResponse = response.choices[1].message.content
                 
                 -- Print the GPT-3 response to the player's chat
-                this:ChatPrint("["..personality.."]: "..gptResponse)
+                this:ChatPrint("[AI]: "..gptResponse)
             else
                 -- Print an error message if the response is invalid or contains an error
                 this:ChatPrint((response and response.error and response.error.message) and "Error! "..response.error.message or 'Unknown error! api key is: '.._G.apiKey..'')
@@ -110,29 +130,10 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
     local txt = string.sub(text,5)
     if cmd == "/say" then
         ply:ChatPrint("One moment, please...")
-        ply:sendGPTRequest(txt)
+        ply:sendGPTRequest(_G.personalitynohello .."RESPONDTOTHIS" ..txt) -- Send the player's message to GPT-3
         return ""
     elseif cmd == "/api" then // Added a missing comma here
         ply:ChatPrint("api key is: ".._G.apiKey) -- Access the API key from the Global table
         
-    end
-end)
-
--- Hook to listen for chat messages
-hook.Add("PlayerSay", "CheckAllNPCs", function(ply, text, teamChat)
-    -- Check if the player typed the command "!allnpcs"
-    if string.lower(text) == "!allnpcs" then
-        -- Get the list of all NPCs
-        local npcTable = list.Get("NPC")
-
-        -- Send the list of all NPCs to the chat
-        for npcClass, npcData in pairs(npcTable) do
-            ply:ChatPrint("NPC Class: " .. npcClass)
-            PrintTable(npcData)
-            ply:ChatPrint("--------------------------")
-        end
-
-        -- Return an empty string to prevent the original message from being sent
-        return ""
     end
 end)

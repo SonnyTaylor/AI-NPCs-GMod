@@ -1,4 +1,5 @@
 -- Context menu button
+local inputapikey = ""
 list.Set( "DesktopWindows", "ai_menu", 
 {
     title = "AI NPCs",
@@ -21,21 +22,33 @@ function drawaihud()
     modelPanel:SetModel("models/humans/group01/male_07.mdl") -- Set the model for the panel
     modelPanel:SetFOV(48) -- Set the field of view to make the model appear bigger
 
-    local nameLabel = vgui.Create("DLabel", frame) -- Create a label for the AI personality
-    nameLabel:SetText("AI Personality:") -- Set the text of the label
-    nameLabel:SetPos(220, 30) -- Set the position of the label
+    -- Increase the rotation speed of the model
+    modelPanel.LayoutEntity = function(self, ent)
+        self:RunAnimation()
+        ent:SetAngles(Angle(0, RealTime() * 100, 0)) -- Increase the rotation speed by modifying the second parameter
+    end
 
-    local aiLinkEntry = vgui.Create("DTextEntry", frame) -- Create a text entry for the AI personality
-    aiLinkEntry:SetPos(220, 50) -- Set the position of the text entry
+    local rightPanel = vgui.Create("DPanel", frame) -- Create a panel for the right side controls
+    rightPanel:Dock(FILL) -- Fill the remaining space
+    rightPanel:SetBackgroundColor(Color(116, 170, 156)) -- Set a light background color
+
+    local nameLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the AI personality
+    nameLabel:SetText("AI Personality:") -- Set the text of the label
+    nameLabel:SetPos(10, 10) -- Set the position of the label
+
+    local aiLinkEntry = vgui.Create("DTextEntry", rightPanel) -- Create a text entry for the AI personality
+    aiLinkEntry:SetPos(10, 30) -- Set the position of the text entry
     aiLinkEntry:SetSize(150, 20) -- Set the size of the text entry
 
-    local npcLabel = vgui.Create("DLabel", frame) -- Create a label for NPC selection
+    local npcLabel = vgui.Create("DLabel", rightPanel) -- Create a label for NPC selection
     npcLabel:SetText("Select NPC:") -- Set the text of the label
-    npcLabel:SetPos(220, 80) -- Set the position of the label
+    npcLabel:SetPos(10, 70) -- Set the position of the label
 
-    local npcDropdown = vgui.Create("DComboBox", frame) -- Create a dropdown menu for NPC selection
-    npcDropdown:SetPos(220, 100) -- Set the position of the dropdown menu
+    local npcDropdown = vgui.Create("DComboBox", rightPanel) -- Create a dropdown menu for NPC selection
+    npcDropdown:SetPos(10, 90) -- Set the position of the dropdown menu
     npcDropdown:SetSize(150, 20) -- Set the size of the dropdown menu
+    npcDropdown:SetValue("npc_citizen") -- Set the default value to "npc_citizen"
+
 
     -- Get the list of all NPCs and populate the dropdown menu
     local npcTable = list.Get("NPC")
@@ -43,19 +56,21 @@ function drawaihud()
         npcDropdown:AddChoice(npcClass)
     end
 
-    local apiKeyLabel = vgui.Create("DLabel", frame) -- Create a label for the API key
+    local apiKeyLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the API key
     apiKeyLabel:SetText("API Key:") -- Set the text of the label
-    apiKeyLabel:SetPos(220, 130) -- Set the position of the label
+    apiKeyLabel:SetPos(10, 130) -- Set the position of the label
 
-    local apiKeyEntry = vgui.Create("DTextEntry", frame) -- Create a text entry for the API key
-    apiKeyEntry:SetPos(220, 150) -- Set the position of the text entry
+    local apiKeyEntry = vgui.Create("DTextEntry", rightPanel) -- Create a text entry for the API key
+    apiKeyEntry:SetPos(10, 150) -- Set the position of the text entry
     apiKeyEntry:SetSize(150, 20) -- Set the size of the text entry
+    apiKeyEntry:SetText(inputapikey) -- Set the default text of the text entry
 
-    local createButton = vgui.Create("DButton", frame) -- Create a button for creating the NPC
+    local createButton = vgui.Create("DButton", rightPanel) -- Create a button for creating the NPC
     createButton:SetText("Create NPC") -- Set the text of the button
-    createButton:SetPos(220, 180) -- Set the position of the button
+    createButton:SetPos(10, 190) -- Set the position of the button
     createButton:SetSize(150, 30) -- Set the size of the button
     createButton.DoClick = function()
+        inputapikey = apiKeyEntry:GetValue()
         -- Send API key
         net.Start("SendAPIKey")
         net.WriteString(apiKeyEntry:GetValue())
