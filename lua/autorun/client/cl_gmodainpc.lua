@@ -44,26 +44,10 @@ function drawaihud()
     createButton:SetPos(220, 130) -- Set the position of the button
     createButton:SetSize(150, 30) -- Set the size of the button
     createButton.DoClick = function()
-        local apiKey = apiKeyEntry:GetValue() -- Get the API key from the text entry
-        file.Write("apikey.txt", apiKey) -- Write the API key to the file, replacing existing content
+        local apiKey = apiKeyEntry:GetValue() -- Get the API key from the text entry'
+        net.Start("sendApiKey") -- Start sending the net message
+        net.WriteType(key) -- Write the variable to the message
+        net.SendToServer() -- Send the message to the server
     end
-
-    local apiKeyEntry = vgui.Create("DTextEntry", frame) -- Create a text entry for the API key
-    apiKeyEntry:SetPos(220, 100) -- Set the position of the text entry
-    apiKeyEntry:SetSize(150, 20) -- Set the size of the text entry
-
-    local createButton = vgui.Create("DButton", frame) -- Create a button for creating the NPC
-    createButton:SetText("Create NPC") -- Set the text of the button
-    createButton:SetPos(220, 130) -- Set the position of the button
-    createButton:SetSize(150, 30) -- Set the size of the button
-
-    local apiKeyEntry = vgui.Create("DTextEntry", frame) -- Create a text entry for the API key
-    apiKeyEntry:SetPos(220, 100) -- Set the position of the text entry
-    apiKeyEntry:SetSize(150, 20) -- Set the size of the text entry
-
-    local createButton = vgui.Create("DButton", frame) -- Create a button for creating the NPC
-    createButton:SetText("Create NPC") -- Set the text of the button
-    createButton:SetPos(220, 130) -- Set the position of the button
-    createButton:SetSize(150, 30) -- Set the size of the button
 end
 

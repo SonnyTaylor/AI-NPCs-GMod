@@ -1,5 +1,11 @@
+util.AddNetworkString("apiKey")
+
+net.Receive("key", function(len, ply)
+    local apiKey = net.ReadType() -- Read the variable from the client
+    print("Received variable from client:", apiKey)
+end)
+
 local meta = FindMetaTable("Player")
-local apiKey = "sk-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" -- Your OpenAI API key here
 
 meta.sendGPTRequest = function(this, text)
     HTTP({
