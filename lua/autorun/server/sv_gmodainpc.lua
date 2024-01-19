@@ -18,9 +18,9 @@ local apikey = _G.apiKey
 
 -- Receive personality from client
 net.Receive( "SendPersonality", function( len, ply )
-    print( "Personality received: ".. net.ReadString() )
     personality = net.ReadString()
-    _G.personality = "You are apart of a Gmod mod, it is your job to act like this given personality: "..personality .."if you understand, respong with a hello in character, keep it short" -- Set the personality in the Global table
+    print( "Personality received: ".. personality )
+    _G.personality = "it is your job to act like this personality: "..personality .."if you understand, respond with a hello in character" -- Set the personality in the Global table
 end )
 
 -- Define SpawnNPC function
@@ -91,7 +91,7 @@ meta.sendGPTRequest = function(this, text)
                 local gptResponse = response.choices[1].message.content
                 
                 -- Print the GPT-3 response to the player's chat
-                this:ChatPrint("[GPT]: "..gptResponse)
+                this:ChatPrint("["..personality.."]: "..gptResponse)
             else
                 -- Print an error message if the response is invalid or contains an error
                 this:ChatPrint((response and response.error and response.error.message) and "Error! "..response.error.message or 'Unknown error! api key is: '.._G.apiKey..'')
