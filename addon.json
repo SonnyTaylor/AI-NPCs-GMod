@@ -1,0 +1,12 @@
+{
+    "title": "My GMod Addon",
+    "description": "",
+    "type": "servercontent",
+    "tags": [
+        "fun"
+    ],
+    "ignore": [
+        ".git/*",
+        "README.md"
+    ]
+}
