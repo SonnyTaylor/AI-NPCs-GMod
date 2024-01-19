@@ -61,3 +61,22 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
         
     end
 end)
+
+-- Hook to listen for chat messages
+hook.Add("PlayerSay", "CheckAllNPCs", function(ply, text, teamChat)
+    -- Check if the player typed the command "!allnpcs"
+    if string.lower(text) == "!allnpcs" then
+        -- Get the list of all NPCs
+        local npcTable = list.Get("NPC")
+
+        -- Send the list of all NPCs to the chat
+        for npcClass, npcData in pairs(npcTable) do
+            ply:ChatPrint("NPC Class: " .. npcClass)
+            PrintTable(npcData)
+            ply:ChatPrint("--------------------------")
+        end
+
+        -- Return an empty string to prevent the original message from being sent
+        return ""
+    end
+end)
