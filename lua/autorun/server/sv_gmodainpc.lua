@@ -1,9 +1,20 @@
-util.AddNetworkString("apiKey")
+util.AddNetworkString( "SendAPIKey" )
+util.AddNetworkString( "SendPersonality" )
 
-net.Receive("key", function(len, ply)
-    local apiKey = net.ReadType() -- Read the variable from the client
-    print("Received variable from client:", apiKey)
-end)
+local apiKey
+local personality
+
+net.Receive( "SendAPIKey", function( len, ply )
+    print( "API key received: ".. net.ReadString() )
+    apiKey = net.ReadString()
+    _G.apiKey = apiKey -- Set the API key in the Global table
+end )
+
+net.Receive( "SendPersonality", function( len, ply )
+    print( "Personality received: ".. net.ReadString() )
+    personality = net.ReadString()
+    _G.personality = "You are apart of a Gmod mod, it is your job to act like this given personality: "..personality .."if you understand, respong with a hello in character" -- Set the personality in the Global table
+end )
 
 local meta = FindMetaTable("Player")
 
@@ -14,7 +25,7 @@ meta.sendGPTRequest = function(this, text)
         method = 'post',
         headers = {
             ['Content-Type'] = 'application/json',
-            ['Authorization'] = 'Bearer '..apiKey,
+            ['Authorization'] = 'Bearer '.._G.apiKey, -- Access the API key from the Global table
         },
         body = [[{
             "model": "gpt-3.5-turbo",
@@ -45,5 +56,8 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
         ply:ChatPrint("One moment, please...")
         ply:sendGPTRequest(txt)
         return ""
+    elseif cmd == "/api" then // Added a missing comma here
+        ply:ChatPrint("api key is: ".._G.apiKey) -- Access the API key from the Global table
+        
     end
 end)

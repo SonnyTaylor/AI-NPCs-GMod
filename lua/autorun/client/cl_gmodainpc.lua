@@ -8,7 +8,6 @@ list.Set( "DesktopWindows", "ai_menu",
     end
 } )
 
-
 function drawaihud()
     local frame = vgui.Create("DFrame") -- Create a frame for the character selection panel
     frame:SetSize(400, 300) -- Set the size of the frame
@@ -44,10 +43,16 @@ function drawaihud()
     createButton:SetPos(220, 130) -- Set the position of the button
     createButton:SetSize(150, 30) -- Set the size of the button
     createButton.DoClick = function()
-        local apiKey = apiKeyEntry:GetValue() -- Get the API key from the text entry'
-        net.Start("sendApiKey") -- Start sending the net message
-        net.WriteType(key) -- Write the variable to the message
-        net.SendToServer() -- Send the message to the server
+        -- Send API key
+        net.Start( "SendAPIKey" )
+            net.WriteString(apiKeyEntry:GetValue())
+        net.SendToServer()
+        -- Send AI personality
+        net.Start( "SendPersonality" )
+            net.WriteString(aiLinkEntry:GetValue())
+        net.SendToServer()
     end
 end
+
+
 
