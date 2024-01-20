@@ -2,25 +2,38 @@
 util.AddNetworkString("SendAPIKey")
 util.AddNetworkString("SendPersonality")
 util.AddNetworkString("SendSelectedNPC")
+util.AddNetworkString( "SayTTS" )
+util.AddNetworkString( "SendTTS" )
 
 local personality
 local selectedNPC
 local isAISpawned = false -- Flag to track whether AI NPC is already spawned
 local spawnedNPC -- Variable to store the reference to the spawned NPC
+local TTSEnabled = false -- Flag to track whether TTS is enabled
 
 -- Receive API key from client
 net.Receive("SendAPIKey", function(len, ply)
     apiKey = net.ReadString()
     print("API key received: " .. apiKey)
     _G.apiKey = apiKey -- Set the API key in the Global table
+
+    if apiKey == "" then
+        ply:ChatPrint("Invalid API key.")
+    end
 end)
+
+net.Receive( "SendTTS", function( len, ply )
+    TTSEnabled = net.ReadBool()
+    print("TTS enabled: " .. tostring(TTSEnabled))
+    _G.TTSEnabled = TTSEnabled -- Set the TTS flag in the Global table
+end )
 
 -- Receive personality from client
 net.Receive("SendPersonality", function(len, ply)
     personality = net.ReadString()
     print("Personality received: " .. personality)
-    _G.personality = "it is your job to act like this personality: " .. personality .. "if you understand, respond with a hello in character and keep it short" -- Set the personality in the Global table
-    _G.personalitynohello = "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all and keep it short: " .. personality
+    _G.personality = "it is your job to act like this personality: " .. personality .. "if you understand, respond with a hello in character" -- Set the personality in the Global table
+    _G.personalitynohello = "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all: " .. personality
 end)
 
 -- Define SpawnNPC function
@@ -41,6 +54,14 @@ function SpawnNPC(pos, ang, npcClass)
         end
     end)
 
+    -- Set up a hook for the NPC's despawn event
+    hook.Add("EntityRemoved", "OnAIDespawn", function(entity)
+        if entity == spawnedNPC then
+            isAISpawned = false
+            print("AI NPC was despawned.")
+            hook.Remove("EntityRemoved", "OnAIDespawn") -- Remove the hook after processing
+        end
+    end)
     return npc
 end
 
@@ -110,8 +131,15 @@ meta.sendGPTRequest = function(this, text)
                 -- Extract the GPT-3 response content
                 local gptResponse = response.choices[1].message.content
                 
-                -- Print the GPT-3 response to the player's chat
-                this:ChatPrint("[AI]: "..gptResponse)
+                -- Print the GPT-3 response to the player's voice chat through tts
+                if _G.TTSEnabled then
+                    net.Start("SayTTS")
+                    net.WriteString(gptResponse)
+                    net.WriteEntity(this)
+                    net.Broadcast()
+                else
+                    this:ChatPrint("[AI]: "..gptResponse)
+                end
             else
                 -- Print an error message if the response is invalid or contains an error
                 this:ChatPrint((response and response.error and response.error.message) and "Error! "..response.error.message or 'Unknown error! api key is: '.._G.apiKey..'')
@@ -125,6 +153,7 @@ meta.sendGPTRequest = function(this, text)
 end
 
 
+
 hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
     local cmd = string.sub(text,1,4)
     local txt = string.sub(text,5)
@@ -132,8 +161,16 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
         ply:ChatPrint("One moment, please...")
         ply:sendGPTRequest(_G.personalitynohello .."RESPONDTOTHIS" ..txt) -- Send the player's message to GPT-3
         return ""
-    elseif cmd == "/api" then // Added a missing comma here
-        ply:ChatPrint("api key is: ".._G.apiKey) -- Access the API key from the Global table
-        
+    elseif cmd == "/api" then 
+        //pass
     end
+end)
+
+-- Reset isAISpawned flag on cleanup
+hook.Add("OnCleanup", "ResetAISpawnedFlag", function(name)
+    isAISpawned = false
+end)
+-- Reset isAISpawned flag on admin cleanup
+hook.Add("AdminCleanup", "ResetAISpawnedFlagAdmin", function()
+    isAISpawned = false
 end)
