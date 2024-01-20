@@ -4,7 +4,7 @@ This is an addon which allows you to spawn AI NPCs that you can talk to and comm
 
 ## Installation
 
-1. Download the latest release from the [GMod Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3142705974).
+1. Download the latest release from the [GMod Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2509518419).
 
 ## How to use
 
