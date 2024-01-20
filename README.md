@@ -1,5 +1,7 @@
 # Garry's Mod AI NPCs
 
+![](https://img.shields.io/steam/subscriptions/3142705974?label=Steam%20Subscriptions&style=for-the-badge&logo=steam)
+
 This is an addon which allows you to spawn AI NPCs that you can talk to and communicate with through the power of ChatGPT and the chat.
 
 ## Installation
