@@ -81,48 +81,59 @@ net.Receive("SendSelectedNPC", function(len, ply)
     ply:sendGPTRequest(_G.personality)
 end)
 
--- Find the metatable for the Player type
 local meta = FindMetaTable("Player")
 
--- Extend the Player metatable to add a custom function for sending requests to GPT-3
 meta.sendGPTRequest = function(this, text)
-    -- Use the HTTP library to make a request to the GPT-3 API
-    HTTP({
-        url = 'https://api.openai.com/v1/chat/completions',
-        type = 'application/json',
-        method = 'post',
-        headers = {
-            ['Content-Type'] = 'application/json',
-            ['Authorization'] = 'Bearer '.._G.apiKey, -- Access the API key from the Global table
-        },
-        body = [[{
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": "]]..text..[["}],
-            "max_tokens": 50,
-            "temperature": 0.7
-        }]],
-        success = function(code, body, headers)
-            -- Parse the JSON response from the GPT-3 API
-            local response = util.JSONToTable(body)
-            
-            -- Check if the response contains valid data
-            if response and response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
-                -- Extract the GPT-3 response content
-                local gptResponse = response.choices[1].message.content
-                
-                -- Print the GPT-3 response to the player's chat
-                this:ChatPrint("[AI]: "..gptResponse)
-            else
-                -- Print an error message if the response is invalid or contains an error
-                this:ChatPrint((response and response.error and response.error.message) and "Error! "..response.error.message or 'Unknown error! api key is: '.._G.apiKey..'')
+    -- Validate input parameters
+    if not text or text == "" then
+        this:ChatPrint("[AI]: Error! Invalid input text.")
+        return
+    end
+
+    local success, result = pcall(function()
+        HTTP({
+            url = 'https://api.openai.com/v1/chat/completions',
+            method = 'POST',
+            headers = {
+                ['Content-Type'] = 'application/json',
+                ['Authorization'] = 'Bearer ' .. (_G.apiKey or '') -- Use a default value or handle missing API key appropriately
+            },
+            body = util.TableToJSON({
+                model = "gpt-3.5-turbo",
+                messages = {{ role = "user", content = text }},
+                max_tokens = 50,
+                temperature = 0.7
+            }),
+            success = function(code, body, headers)
+                local response = util.JSONToTable(body)
+
+                if response and response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
+                    local gptResponse = response.choices[1].message.content
+                    this:ChatPrint("[AI]: " .. gptResponse)
+                else
+                    local errorMessage = response and response.error and response.error.message or 'Unknown error!'
+                    this:ChatPrint("[AI]: Error! " .. errorMessage)
+                end
+            end,
+            failed = function(err)
+                this:ChatPrint("[AI]: HTTP Error - " .. err)
+
+                -- Additional debugging information
+                print("Failed to make HTTP request to GPT-3 API.")
+                print("API Key: " .. (_G.apiKey and "Set" or "Not set"))
+                print("Request Body: " .. text)
             end
-        end,
-        failed = function(err)
-            -- Print an error message if the HTTP request fails
-            ErrorNoHalt('HTTP Error: '..err)
-        end
-    })
+        })
+    end)
+
+    if not success then
+        this:ChatPrint("[AI]: Error! An unexpected error occurred. Check server logs for details.")
+        -- Log the error to a server log file or console for further investigation
+        print("Unexpected error in sendGPTRequest:", result)
+    end
 end
+
+
 
 
 hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
