@@ -107,9 +107,9 @@ local meta = FindMetaTable("Player")
 
 -- Extend the Player metatable to add a custom function for sending requests to GPT-3
 meta.sendGPTRequest = function(this, text)
-    -- Use the HTTP library to make a request to the GPT-3 API
+    -- Use the HTTP library to make a request to the new GPT-3 API endpoint
     HTTP({
-        url = 'https://api.openai.com/v1/chat/completions',
+        url = 'https://api.pawan.krd/v1/completions',
         type = 'application/json',
         method = 'post',
         headers = {
@@ -117,40 +117,54 @@ meta.sendGPTRequest = function(this, text)
             ['Authorization'] = 'Bearer '.._G.apiKey, -- Access the API key from the Global table
         },
         body = [[{
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": "]]..text..[["}],
-            "max_tokens": 50,
-            "temperature": 0.7
+            "model": "pai-001-beta",
+            "prompt": "Human: ]]..text..[[\\nAI:",
+            "temperature": 0.7,
+            "max_tokens": 256,
+            "stop": [
+                "Human:",
+                "AI:"
+            ]
         }]],
         success = function(code, body, headers)
-            -- Parse the JSON response from the GPT-3 API
+            print('Success:', code, body, headers) -- Print response details for debugging
+            -- Parse the JSON response from the new GPT-3 API endpoint
             local response = util.JSONToTable(body)
             
             -- Check if the response contains valid data
-            if response and response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
-                -- Extract the GPT-3 response content
-                local gptResponse = response.choices[1].message.content
+            if response then
+                print('Response:', util.TableToJSON(response, true)) -- Print parsed response for debugging
                 
-                -- Print the GPT-3 response to the player's voice chat through tts
-                if _G.TTSEnabled then
-                    net.Start("SayTTS")
-                    net.WriteString(gptResponse)
-                    net.WriteEntity(this)
-                    net.Broadcast()
+                if response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
+                    -- Extract the GPT-3 response content
+                    local gptResponse = response.choices[1].message.content
+                    
+                    -- Print the GPT-3 response to the player's voice chat through tts
+                    if _G.TTSEnabled then
+                        net.Start("SayTTS")
+                        net.WriteString(gptResponse)
+                        net.WriteEntity(this)
+                        net.Broadcast()
+                    else
+                        this:ChatPrint("[AI]: "..gptResponse)
+                    end
                 else
-                    this:ChatPrint("[AI]: "..gptResponse)
+                    this:ChatPrint("Error: Invalid response structure. Check the response structure.")
                 end
             else
-                -- Print an error message if the response is invalid or contains an error
-                this:ChatPrint((response and response.error and response.error.message) and "Error! "..response.error.message or 'Unknown error! api key is: '.._G.apiKey..'')
+                this:ChatPrint("Error: Unable to parse the response. Check the response structure.")
             end
         end,
         failed = function(err)
+            print('Failed:', err) -- Print error details for debugging
             -- Print an error message if the HTTP request fails
             ErrorNoHalt('HTTP Error: '..err)
         end
     })
 end
+
+
+
 
 
 
