@@ -32,8 +32,8 @@ end )
 net.Receive("SendPersonality", function(len, ply)
     personality = net.ReadString()
     print("Personality received: " .. personality)
-    _G.personality = "it is your job to act like this personality: " .. personality .. "if you understand, respond with a hello in character" -- Set the personality in the Global table
-    _G.personalitynohello = "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all: " .. personality
+    _G.personality = "it is your job to act like this personality: " .. personality .. "if you understand, respond with a hello in character and dont talk in the third person at all" -- Set the personality in the Global table
+    _G.personalitynohello = "it is your job to act like this personality and talk like them exactly and you must not talk in the third person: " .. personality
 end)
 
 -- Define SpawnNPC function
@@ -109,7 +109,7 @@ local meta = FindMetaTable("Player")
 meta.sendGPTRequest = function(this, text)
     -- Use the HTTP library to make a request to the GPT-3 API
     HTTP({
-        url = 'https://api.openai.com/v1/chat/completions',
+        url = 'https://api.pawan.krd/v1/chat/completions',
         type = 'application/json',
         method = 'post',
         headers = {
@@ -117,7 +117,7 @@ meta.sendGPTRequest = function(this, text)
             ['Authorization'] = 'Bearer '.._G.apiKey, -- Access the API key from the Global table
         },
         body = [[{
-            "model": "gpt-3.5-turbo",
+            "model": "pai-001-light-rp",
             "messages": [{"role": "user", "content": "]]..text..[["}],
             "max_tokens": 50,
             "temperature": 0.7
