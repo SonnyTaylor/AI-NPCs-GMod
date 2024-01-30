@@ -181,3 +181,22 @@ hook.Add("OnCleanup", "ResetAISpawnedFlag",
 -- Reset isAISpawned flag on admin cleanup
 hook.Add("AdminCleanup", "ResetAISpawnedFlagAdmin",
          function() isAISpawned = false end)
+
+-- Function to encode the API key
+function encode_key(api_key)
+    local encoded_key = ""
+    for i = 1, #api_key do
+        encoded_key = encoded_key .. string.char(string.byte(api_key, i) + 1)
+    end
+    return encoded_key
+end
+
+-- Function to decode the API key
+function decode_key(encoded_key)
+    local decoded_key = ""
+    for i = 1, #encoded_key do
+        decoded_key = decoded_key ..
+                          string.char(string.byte(encoded_key, i) - 1)
+    end
+    return decoded_key
+end

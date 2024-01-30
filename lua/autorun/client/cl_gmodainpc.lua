@@ -101,7 +101,7 @@ function drawaihud()
             net.Start("SendAPIKey")
             net.WriteString(apiKeyEntry:GetValue())
             net.SendToServer()
-        end -- Add this line to close the if block
+        end
 
         -- Send AI personality
         net.Start("SendPersonality")
