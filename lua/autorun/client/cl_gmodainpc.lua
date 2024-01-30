@@ -1,6 +1,3 @@
--- Please dont steal our API key, we are poor
-local FREEFREEAPIKEY = "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"
-
 -- Context menu button
 local inputapikey = ""
 list.Set("DesktopWindows", "ai_menu", {
@@ -95,8 +92,10 @@ function drawaihud()
         inputapikey = apiKeyEntry:GetValue()
         -- Send API key
         if freeAPIButton:GetChecked() then
+            -- Please dont steal our API key, we are poor
+            local APIKEY = "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"
             net.Start("SendAPIKey")
-            net.WriteString(FREEAPIKEY)
+            net.WriteString(APIKEY)
             net.SendToServer()
         else
             net.Start("SendAPIKey")
