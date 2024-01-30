@@ -15,6 +15,7 @@ local TTSEnabled = false -- Flag to track whether TTS is enabled
 net.Receive("SendAPIKey", function(len, ply)
     apiKey = net.ReadString()
     -- Please dont steal our API key, we are poor
+    --TODO Add Encrpytion Decrpytion crap to obfuscate api key
     if apiKey == "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" then
         print("Free API key received")
     else

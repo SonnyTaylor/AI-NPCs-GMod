@@ -1,12 +1,7 @@
 {
-    "title": "My GMod Addon",
-    "description": "",
-    "type": "servercontent",
-    "tags": [
-        "fun"
-    ],
-    "ignore": [
-        ".git/*",
-        "README.md"
-    ]
+  "title": "ChatGPT NPCs",
+  "description": "Introducing an addon that empowers you to bring AI NPCs to life, enabling immersive conversations through the dynamic capabilities of ChatGPT and the chat. Im yet to test this in MP so there may be bugs.",
+  "type": "npc",
+  "tags": ["fun", "roleplay"],
+  "ignore": [".git/*", "README.md"]
 }

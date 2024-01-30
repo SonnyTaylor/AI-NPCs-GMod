@@ -93,6 +93,7 @@ function drawaihud()
         -- Send API key
         if freeAPIButton:GetChecked() then
             -- Please dont steal our API key, we are poor
+            -- TODO Change this to a encrypted key using server encrypt function
             local APIKEY = "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"
             net.Start("SendAPIKey")
             net.WriteString(APIKEY)
@@ -121,6 +122,7 @@ function drawaihud()
 
 end
 
+-- TODO Convert this to serverside code so that audio can changed to follow NPC
 net.Receive("SayTTS", function()
     local text = net.ReadString() -- Read the TTS text from the network
     local ply = net.ReadEntity() -- Read the player entity from the network
