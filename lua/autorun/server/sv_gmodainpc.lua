@@ -129,12 +129,12 @@ meta.sendGPTRequest = function(this, text)
     }
 
     HTTP({
-        url = 'https://api.openai.com/v1/chat/completions',
-        type = 'application/json',
-        method = 'post',
+        url = "https://api.openai.com/v1/chat/completions",
+        type = "application/json",
+        method = "post",
         headers = {
-            ['Content-Type'] = 'application/json',
-            ['Authorization'] = 'Bearer ' .. _G.apiKey -- Access the API key from the Global table
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. _G.apiKey -- Access the API key from the Global table
         },
         body = util.TableToJSON(requestBody),
 
@@ -163,13 +163,13 @@ meta.sendGPTRequest = function(this, text)
                 this:ChatPrint((response and response.error and
                                    response.error.message) and "Error! " ..
                                    response.error.message or
-                                   'Unknown error! api key is: ' .. _G.apiKey ..
+                                   "Unknown error! api key is: " .. _G.apiKey ..
                                    '')
             end
         end,
         failed = function(err)
             -- Print an error message if the HTTP request fails
-            ErrorNoHalt('HTTP Error: ' .. err)
+            ErrorNoHalt("HTTP Error: " .. err)
         end
     })
 end
