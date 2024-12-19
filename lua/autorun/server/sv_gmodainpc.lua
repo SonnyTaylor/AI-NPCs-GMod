@@ -116,6 +116,18 @@ local meta = FindMetaTable("Player")
 -- Extend the Player metatable to add a custom function for sending requests to GPT-3
 meta.sendGPTRequest = function(this, text)
     -- Use the HTTP library to make a request to the GPT-3 API
+    local requestBody = {
+        model = "gpt-3.5-turbo",
+        messages = {
+            {
+                role = "user",
+                content = text
+            }
+        },
+        max_tokens = 50,
+        temperature = 0.7
+    }
+
     HTTP({
         url = 'https://api.openai.com/v1/chat/completions',
         type = 'application/json',
@@ -124,12 +136,8 @@ meta.sendGPTRequest = function(this, text)
             ['Content-Type'] = 'application/json',
             ['Authorization'] = 'Bearer ' .. _G.apiKey -- Access the API key from the Global table
         },
-        body = [[{
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": "]] .. text .. [["}],
-            "max_tokens": 50,
-            "temperature": 0.7
-        }]],
+        body = util.TableToJSON(requestBody),
+
         success = function(code, body, headers)
             -- Parse the JSON response from the GPT-3 API
             local response = util.JSONToTable(body)
