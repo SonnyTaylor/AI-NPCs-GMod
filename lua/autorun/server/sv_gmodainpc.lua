@@ -124,7 +124,7 @@ meta.sendGPTRequest = function(this, text)
                 content = text
             }
         },
-        max_tokens = 50, -- JSONToTable changes integers to float
+        max_tokens = 50, 
         temperature = 0.7
     }
 
@@ -140,7 +140,7 @@ meta.sendGPTRequest = function(this, text)
             ["Content-Type"] = "application/json",
             ["Authorization"] = "Bearer " .. _G.apiKey -- Access the API key from the Global table
         },
-        body = correctFloatToInt(util.TableToJSON(requestBody)),
+        body = correctFloatToInt(util.TableToJSON(requestBody)), -- tableToJSON changes integers to float
 
         success = function(code, body, headers)
             -- Parse the JSON response from the GPT-3 API
