@@ -124,9 +124,13 @@ meta.sendGPTRequest = function(this, text)
                 content = text
             }
         },
-        max_tokens = 50,
+        max_tokens = 50, -- JSONToTable changes integers to float
         temperature = 0.7
     }
+
+    local function correctFloatToInt(jsonString)
+        return string.gsub(jsonString, '(%d+)%.0', '%1')
+    end
 
     HTTP({
         url = "https://api.openai.com/v1/chat/completions",
@@ -136,7 +140,7 @@ meta.sendGPTRequest = function(this, text)
             ["Content-Type"] = "application/json",
             ["Authorization"] = "Bearer " .. _G.apiKey -- Access the API key from the Global table
         },
-        body = util.TableToJSON(requestBody),
+        body = correctFloatToInt(util.TableToJSON(requestBody)),
 
         success = function(code, body, headers)
             -- Parse the JSON response from the GPT-3 API
