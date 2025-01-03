@@ -8,7 +8,7 @@ list.Set("DesktopWindows", "ai_menu", {
 
 function drawaihud()
     local frame = vgui.Create("DFrame") -- Create a frame for the character selection panel
-    frame:SetSize(400, 310) -- Set the size of the frame
+    frame:SetSize(400, 380) -- Set the size of the frame
     frame:SetTitle("Character Selection") -- Set the title of the frame
     frame:Center() -- Center the frame on the screen
     frame:MakePopup() -- Make the frame a popup
@@ -42,12 +42,23 @@ function drawaihud()
     aiLinkEntry:SetPos(10, 30) -- Set the position of the text entry
     aiLinkEntry:SetSize(170, 20) -- Set the size of the text entry
 
+    local providerLabel = vgui.Create("DLabel", rightPanel) -- Create a label for Provider selection
+    providerLabel:SetText("Provider:") -- Set the text of the label
+    providerLabel:SetPos(10, 60) -- Set the position of the label
+
+    local providerDropdown = vgui.Create("DComboBox", rightPanel) -- Create a dropdown menu for Provider selection
+    providerDropdown:SetPos(10, 80) -- Set the position of the dropdown menu
+    providerDropdown:SetSize(170, 20) -- Set the size of the dropdown menu
+    providerDropdown:SetValue("openai") -- Set the default value
+    providerDropdown:AddChoice("openai") -- Add "openai" as an option
+    providerDropdown:AddChoice("openrouter") -- Add "openrouter" as an option
+
     local npcLabel = vgui.Create("DLabel", rightPanel) -- Create a label for NPC selection
     npcLabel:SetText("Select NPC:") -- Set the text of the label
-    npcLabel:SetPos(10, 60) -- Set the position of the label
+    npcLabel:SetPos(10, 110) -- Set the position of the label
 
     local npcDropdown = vgui.Create("DComboBox", rightPanel) -- Create a dropdown menu for NPC selection
-    npcDropdown:SetPos(10, 80) -- Set the position of the dropdown menu
+    npcDropdown:SetPos(10, 130) -- Set the position of the dropdown menu
     npcDropdown:SetSize(170, 20) -- Set the size of the dropdown menu
     npcDropdown:SetValue("npc_citizen") -- Set the default value to "npc_citizen"
 
@@ -57,15 +68,16 @@ function drawaihud()
 
     local apiKeyLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the API key
     apiKeyLabel:SetText("API Key:") -- Set the text of the label
-    apiKeyLabel:SetPos(10, 110) -- Set the position of the label
+    apiKeyLabel:SetPos(10, 160) -- Set the position of the label
 
     local apiKeyEntry = vgui.Create("DTextEntry", rightPanel) -- Create a text entry for the API key
-    apiKeyEntry:SetPos(10, 130) -- Set the position of the text entry
+    apiKeyEntry:SetPos(10, 180) -- Set the position of the text entry
     apiKeyEntry:SetSize(170, 20) -- Set the size of the text entry
     apiKeyEntry:SetText(inputapikey) -- Set the default text of the text entry
+
     local freeAPIButton = vgui.Create("DCheckBoxLabel", rightPanel) -- Create a checkbox for enabling "Free API"
     freeAPIButton:SetText("Free API") -- Set the text of the checkbox
-    freeAPIButton:SetPos(10, 155) -- Set the position of the checkbox
+    freeAPIButton:SetPos(10, 210) -- Set the position of the checkbox
     freeAPIButton:SetSize(170, 20) -- Set the size of the checkbox
 
     freeAPIButton.OnChange = function(self, value)
@@ -79,17 +91,23 @@ function drawaihud()
 
     local TTSButton = vgui.Create("DCheckBoxLabel", rightPanel) -- Create a button for creating the NPC
     TTSButton:SetText("Text to Speech") -- Set the text of the button
-    TTSButton:SetPos(10, 169) -- Nice, Set the position of the button
-    TTSButton:SetSize(170, 50) -- Set the size of the button
+    TTSButton:SetPos(10, 230) -- Nice, Set the position of the button
+    TTSButton:SetSize(170, 20) -- Set the size of the button
     TTSButton:SetValue(0)
 
     local createButton = vgui.Create("DButton", rightPanel) -- Create a button for creating the NPC
     createButton:SetText("Create NPC") -- Set the text of the button
-    createButton:SetPos(10, 210) -- Set the position of the button
+    createButton:SetPos(10, 260) -- Set the position of the button
     createButton:SetSize(170, 60) -- Set the size of the button
 
     createButton.DoClick = function()
         inputapikey = apiKeyEntry:GetValue()
+
+        -- Send provider selection
+        net.Start("SendProvider")
+        net.WriteString(providerDropdown:GetValue())
+        net.SendToServer()
+
         -- Send API key
         if freeAPIButton:GetChecked() then
             -- Please dont steal our API key, we are poor
