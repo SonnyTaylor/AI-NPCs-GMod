@@ -116,20 +116,32 @@ local meta = FindMetaTable("Player")
 -- Extend the Player metatable to add a custom function for sending requests to GPT-3
 meta.sendGPTRequest = function(this, text)
     -- Use the HTTP library to make a request to the GPT-3 API
-    HTTP({
-        url = 'https://api.openai.com/v1/chat/completions',
-        type = 'application/json',
-        method = 'post',
-        headers = {
-            ['Content-Type'] = 'application/json',
-            ['Authorization'] = 'Bearer ' .. _G.apiKey -- Access the API key from the Global table
+    local requestBody = {
+        model = "gpt-3.5-turbo",
+        messages = {
+            {
+                role = "user",
+                content = text
+            }
         },
-        body = [[{
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": "]] .. text .. [["}],
-            "max_tokens": 50,
-            "temperature": 0.7
-        }]],
+        max_tokens = 50, 
+        temperature = 0.7
+    }
+
+    local function correctFloatToInt(jsonString)
+        return string.gsub(jsonString, '(%d+)%.0', '%1')
+    end
+
+    HTTP({
+        url = "https://api.openai.com/v1/chat/completions",
+        type = "application/json",
+        method = "post",
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. _G.apiKey -- Access the API key from the Global table
+        },
+        body = correctFloatToInt(util.TableToJSON(requestBody)), -- tableToJSON changes integers to float
+
         success = function(code, body, headers)
             -- Parse the JSON response from the GPT-3 API
             local response = util.JSONToTable(body)
@@ -155,13 +167,13 @@ meta.sendGPTRequest = function(this, text)
                 this:ChatPrint((response and response.error and
                                    response.error.message) and "Error! " ..
                                    response.error.message or
-                                   'Unknown error! api key is: ' .. _G.apiKey ..
+                                   "Unknown error! api key is: " .. _G.apiKey ..
                                    '')
             end
         end,
         failed = function(err)
             -- Print an error message if the HTTP request fails
-            ErrorNoHalt('HTTP Error: ' .. err)
+            ErrorNoHalt("HTTP Error: " .. err)
         end
     })
 end
