@@ -94,29 +94,20 @@ function drawaihud()
         if freeAPIButton:GetChecked() then
             -- Please dont steal our API key, we are poor
             -- TODO Change this to a encrypted key using server encrypt function
-            local APIKEY = "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"
-            net.Start("SendAPIKey")
-            net.WriteString(APIKEY)
-            net.SendToServer()
+            APIKEY = "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"
         else
-            net.Start("SendAPIKey")
-            net.WriteString(apiKeyEntry:GetValue())
-            net.SendToServer()
+            APIKEY = apiKeyEntry:GetValue()
         end
 
-        -- Send AI personality
-        net.Start("SendPersonality")
-        net.WriteString(aiLinkEntry:GetValue())
-        net.SendToServer()
+        local requestBody = {
+            apiKey = APIKEY,
+            personality = aiLinkEntry:GetValue(),
+            selectedNPC = npcDropdown:GetValue(),
+            enableTTS = TTSButton:GetChecked()
+        }
 
-        -- Send selected NPC class
-        net.Start("SendSelectedNPC")
-        net.WriteString(npcDropdown:GetValue())
-        net.SendToServer()
-
-        -- Send if TTS should be enabled
-        net.Start("SendTTS")
-        net.WriteBool(TTSButton:GetChecked())
+        net.Start("SendNPCInfo")
+        net.WriteTable(requestBody)
         net.SendToServer()
     end
 
