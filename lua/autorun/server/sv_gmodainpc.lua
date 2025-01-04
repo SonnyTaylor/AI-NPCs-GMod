@@ -2,24 +2,8 @@
 util.AddNetworkString("SendNPCInfo")
 util.AddNetworkString("SayTTS")
 
-local personality
-local selectedNPC
-local isAISpawned = false -- Flag to track whether AI NPC is already spawned
 local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
 local npcCounter = 0 -- Counter for unique keys
-local TTSEnabled = false -- Flag to track whether TTS is enabled
-
--- Receive personality from client
-net.Receive("SendPersonality", function(len, ply)
-    personality = net.ReadString()
-    print("Personality received: " .. personality)
-    _G.personality = "it is your job to act like this personality: " ..
-                         personality ..
-                         "if you understand, respond with a hello in character" -- Set the personality in the Global table
-    _G.personalitynohello =
-        "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all: " ..
-            personality
-end)
 
 net.Receive("SendNPCInfo", function(len, ply)
     local data = net.ReadTable()
@@ -49,14 +33,13 @@ net.Receive("SendNPCInfo", function(len, ply)
 
     spawnedNPC[key]["apiKey"] = apiKey
 
+    spawnedNPC[key]["enableTTS"] = data["enableTTS"]
+
     local personality = data["personality"]
     print("Personality received: " .. personality)
     spawnedNPC[key]["personality"] = "it is your job to act like this personality: " ..
                                      personality ..
                                      "if you understand, respond with a hello in character" -- Set the personality in the Global table
-    spawnedNPC[key]["personalitynohello"] =
-        "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all: " ..
-        spawnedNPC[key]["personality"]
 
     local selectedNPC = data["selectedNPC"]
     print("Selected NPC: " .. selectedNPC)
@@ -100,8 +83,8 @@ function SpawnNPC(pos, ang, npcClass, key)
     -- Set up a hook for the NPC's death event
     hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)
         if npc == spawnedNPC[key]["npc"] then
-            isAISpawned = false
             print("AI NPC died or was despawned.")
+            spawnedNPC[key] = nil -- Remove NPC from list
             hook.Remove("OnNPCKilled", "OnAIDeath") -- Remove the hook after processing
         end
     end)
@@ -109,8 +92,8 @@ function SpawnNPC(pos, ang, npcClass, key)
     -- Set up a hook for the NPC's despawn event
     hook.Add("EntityRemoved", "OnAIDespawn", function(entity)
         if entity == spawnedNPC[key]["npc"] then
-            isAISpawned = false
             print("AI NPC was despawned.")
+            spawnedNPC[key] = nil -- Remove NPC from list
             hook.Remove("EntityRemoved", "OnAIDespawn") -- Remove the hook after processing
         end
     end)
@@ -148,7 +131,7 @@ meta.sendGPTRequest = function(this, key, author, text)
         method = "post",
         headers = {
             ["Content-Type"] = "application/json",
-            ["Authorization"] = "Bearer " .. _G.apiKey -- Access the API key from the Global table
+            ["Authorization"] = "Bearer " .. spawnedNPC[key]["apiKey"] -- Access the API key from the Global table
         },
         body = correctFloatToInt(util.TableToJSON(requestBody)), -- tableToJSON changes integers to float
 
@@ -168,11 +151,11 @@ meta.sendGPTRequest = function(this, key, author, text)
                     spawnedNPC[key]["historyCounter"]
                 ] = {
                     role = "assistant",
-                    content = text
+                    content = gptResponse
                 }
 
                 -- Print the GPT-3 response to the player's voice chat through tts
-                if _G.TTSEnabled then
+                if spawnedNPC[key]["enableTTS"] then
                     net.Start("SayTTS")
                     net.WriteString(gptResponse)
                     net.WriteEntity(this)
@@ -185,7 +168,7 @@ meta.sendGPTRequest = function(this, key, author, text)
                 this:ChatPrint((response and response.error and
                                    response.error.message) and "Error! " ..
                                    response.error.message or
-                                   "Unknown error! api key is: " .. _G.apiKey ..
+                                   "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
                                    '')
             end
         end,
@@ -202,7 +185,7 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
     if cmd == "/say" then
         ply:ChatPrint("One moment, please...")
         for key, _ in pairs(spawnedNPC) do
-            ply:sendGPTRequest(key, 'user', _G.personalitynohello .. "RESPONDTOTHIS" .. txt) -- Send the player's message to GPT-3
+            ply:sendGPTRequest(key, 'user', txt) -- Send the player's message to GPT-3
         end
         return ""
     end
