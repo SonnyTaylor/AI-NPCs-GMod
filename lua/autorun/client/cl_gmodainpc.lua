@@ -112,36 +112,30 @@ function drawaihud()
         if freeAPIButton:GetChecked() then
             -- Please dont steal our API key, we are poor
             -- TODO Change this to a encrypted key using server encrypt function
-            local APIKEY = "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"
-            net.Start("SendAPIKey")
-            net.WriteString(APIKEY)
-            net.SendToServer()
+            APIKEY = "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"
         else
-            net.Start("SendAPIKey")
-            net.WriteString(apiKeyEntry:GetValue())
-            net.SendToServer()
+            APIKEY = apiKeyEntry:GetValue()
         end
 
-        -- Send AI personality
-        net.Start("SendPersonality")
-        net.WriteString(aiLinkEntry:GetValue())
-        net.SendToServer()
+        local requestBody = {
+            apiKey = APIKEY,
+            personality = aiLinkEntry:GetValue(),
+            selectedNPC = npcDropdown:GetValue(),
+            enableTTS = TTSButton:GetChecked()
+        }
 
-        -- Send selected NPC class
-        net.Start("SendSelectedNPC")
-        net.WriteString(npcDropdown:GetValue())
-        net.SendToServer()
-
-        -- Send if TTS should be enabled
-        net.Start("SendTTS")
-        net.WriteBool(TTSButton:GetChecked())
+        net.Start("SendNPCInfo")
+        net.WriteTable(requestBody)
         net.SendToServer()
     end
 
 end
 
+soundList = {}
+
 -- TODO Convert this to serverside code so that audio can changed to follow NPC
 net.Receive("SayTTS", function()
+    local key = net.ReadString()
     local text = net.ReadString() -- Read the TTS text from the network
     local ply = net.ReadEntity() -- Read the player entity from the network
     text = string.sub(string.Replace(text, " ", "%20"), 1, 1000) -- Replace spaces with "%20" and limit the text length to 100 characters
@@ -155,16 +149,14 @@ net.Receive("SayTTS", function()
                 sound:SetVolume(1) -- Set the sound volume to maximum
                 sound:Play() -- Play the sound
                 sound:Set3DFadeDistance(200, 1000) -- Set the 3D sound fade distance
-                ply.sound = sound -- Store the sound reference in the player entity
+                soundList[key] = sound -- Store the sound reference in the player entity
             end
         end)
 end)
 
--- Update the position of the TTS sound for all players
-hook.Add("Think", "FollowPlayerSound", function()
-    for k, v in pairs(player.GetAll()) do
-        if IsValid(v.sound) then
-            v.sound:SetPos(v:GetPos()) -- Set the sound position to the player's position
-        end
-    end
+net.Receive("TTSPositionUpdate", function()
+    local key = net.ReadString()
+    local pos = net.ReadVector()
+
+    soundList[key]:SetPos(pos)
 end)
