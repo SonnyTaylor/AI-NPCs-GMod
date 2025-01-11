@@ -1,6 +1,7 @@
 -- Add network strings for communication between client and server
 util.AddNetworkString("SendNPCInfo")
 util.AddNetworkString("SayTTS")
+util.AddNetworkString("TTSPositionUpdate")
 
 local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
 local npcCounter = 0 -- Counter for unique keys
@@ -24,9 +25,7 @@ net.Receive("SendNPCInfo", function(len, ply)
         return nil
     end
     -- Generate a unique key for the NPC
-    npcCounter = npcCounter + 1
-    local key = "npc_" .. npcCounter
-    spawnedNPC[key] = {}
+    local key = table.insert(spawnedNPC, {})
 
     spawnedNPC[key]["history"] = {}
     spawnedNPC[key]["historyCounter"] = 0
@@ -105,13 +104,10 @@ local meta = FindMetaTable("Player")
 
 -- Extend the Player metatable to add a custom function for sending requests to GPT-3
 meta.sendGPTRequest = function(this, key, author, text)
-    spawnedNPC[key]["historyCounter"] = spawnedNPC[key]["historyCounter"] + 1
-    spawnedNPC[key]["history"][
-        spawnedNPC[key]["historyCounter"]
-    ] = {
+    table.insert(spawnedNPC[key]["history"], {
         role = author,
         content = text
-    }
+    })
 
     -- Use the HTTP library to make a request to the GPT-3 API
     local requestBody = {
@@ -146,19 +142,17 @@ meta.sendGPTRequest = function(this, key, author, text)
                 -- Extract the GPT-3 response content
                 local gptResponse = response.choices[1].message.content
 
-                spawnedNPC[key]["historyCounter"] = spawnedNPC[key]["historyCounter"] + 1
-                spawnedNPC[key]["history"][
-                    spawnedNPC[key]["historyCounter"]
-                ] = {
+                table.insert(spawnedNPC[key]["history"], {
                     role = "assistant",
                     content = gptResponse
-                }
+                })
 
                 -- Print the GPT-3 response to the player's voice chat through tts
                 if spawnedNPC[key]["enableTTS"] then
                     net.Start("SayTTS")
+                    net.WriteString(key)
                     net.WriteString(gptResponse)
-                    net.WriteEntity(this)
+                    net.WriteEntity(spawnedNPC[key]["npc"])
                     net.Broadcast()
                 else
                     this:ChatPrint("[AI]: " .. gptResponse)
@@ -191,12 +185,21 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
     end
 end)
 
+hook.Add("Think", "FollowNPCSound", function()
+    for k, v in pairs(spawnedNPC) do
+        net.Start("TTSPositionUpdate")
+        net.WriteString(k)
+        net.WriteVector(v.npc:GetPos())
+        net.Broadcast()
+    end
+end)
+
 -- Reset isAISpawned flag on cleanup
 hook.Add("OnCleanup", "ResetAISpawnedFlag",
-         function(name) isAISpawned = false end)
+         function(name) spawnedNPC = {} end)
 -- Reset isAISpawned flag on admin cleanup
 hook.Add("AdminCleanup", "ResetAISpawnedFlagAdmin",
-         function() isAISpawned = false end)
+         function() spawnedNPC = {} end)
 
 -- Function to encode the API key
 function encode_key(api_key)

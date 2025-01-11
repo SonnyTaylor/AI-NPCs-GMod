@@ -63,6 +63,7 @@ function drawaihud()
     apiKeyEntry:SetPos(10, 130) -- Set the position of the text entry
     apiKeyEntry:SetSize(170, 20) -- Set the size of the text entry
     apiKeyEntry:SetText(inputapikey) -- Set the default text of the text entry
+    
     local freeAPIButton = vgui.Create("DCheckBoxLabel", rightPanel) -- Create a checkbox for enabling "Free API"
     freeAPIButton:SetText("Free API") -- Set the text of the checkbox
     freeAPIButton:SetPos(10, 155) -- Set the position of the checkbox
@@ -113,8 +114,11 @@ function drawaihud()
 
 end
 
+soundList = {}
+
 -- TODO Convert this to serverside code so that audio can changed to follow NPC
 net.Receive("SayTTS", function()
+    local key = net.ReadString()
     local text = net.ReadString() -- Read the TTS text from the network
     local ply = net.ReadEntity() -- Read the player entity from the network
     text = string.sub(string.Replace(text, " ", "%20"), 1, 1000) -- Replace spaces with "%20" and limit the text length to 100 characters
@@ -128,16 +132,14 @@ net.Receive("SayTTS", function()
                 sound:SetVolume(1) -- Set the sound volume to maximum
                 sound:Play() -- Play the sound
                 sound:Set3DFadeDistance(200, 1000) -- Set the 3D sound fade distance
-                ply.sound = sound -- Store the sound reference in the player entity
+                soundList[key] = sound -- Store the sound reference in the player entity
             end
         end)
 end)
 
--- Update the position of the TTS sound for all players
-hook.Add("Think", "FollowPlayerSound", function()
-    for k, v in pairs(player.GetAll()) do
-        if IsValid(v.sound) then
-            v.sound:SetPos(v:GetPos()) -- Set the sound position to the player's position
-        end
-    end
+net.Receive("TTSPositionUpdate", function()
+    local key = net.ReadString()
+    local pos = net.ReadVector()
+
+    soundList[key]:SetPos(pos)
 end)
