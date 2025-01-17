@@ -3,8 +3,9 @@ util.AddNetworkString("SendNPCInfo")
 util.AddNetworkString("SayTTS")
 util.AddNetworkString("TTSPositionUpdate")
 
+providers = include('providers/providers.lua')
+
 local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
-local npcCounter = 0 -- Counter for unique keys
 
 net.Receive("SendNPCInfo", function(len, ply)
     local data = net.ReadTable()
@@ -28,8 +29,8 @@ net.Receive("SendNPCInfo", function(len, ply)
     local key = table.insert(spawnedNPC, {})
 
     spawnedNPC[key]["history"] = {}
-    spawnedNPC[key]["historyCounter"] = 0
 
+    spawnedNPC[key]["provider"] = data["provider"]
     spawnedNPC[key]["apiKey"] = apiKey
 
     spawnedNPC[key]["enableTTS"] = data["enableTTS"]
@@ -109,68 +110,64 @@ meta.sendGPTRequest = function(this, key, author, text)
         content = text
     })
 
-    -- Use the HTTP library to make a request to the GPT-3 API
-    local requestBody = {
-        model = "gpt-3.5-turbo",
-        messages = spawnedNPC[key]["history"],
-        max_tokens = 50, 
-        temperature = 0.7
-    }
+    local provider = providers.get(spawnedNPC[key]["provider"])
 
-    local function correctFloatToInt(jsonString)
-        return string.gsub(jsonString, '(%d+)%.0', '%1')
-    end
-
-    HTTP({
-        url = "https://api.openai.com/v1/chat/completions",
-        type = "application/json",
-        method = "post",
-        headers = {
-            ["Content-Type"] = "application/json",
-            ["Authorization"] = "Bearer " .. spawnedNPC[key]["apiKey"] -- Access the API key from the Global table
-        },
-        body = correctFloatToInt(util.TableToJSON(requestBody)), -- tableToJSON changes integers to float
-
-        success = function(code, body, headers)
-            -- Parse the JSON response from the GPT-3 API
-            local response = util.JSONToTable(body)
-
-            -- Check if the response contains valid data
-            if response and response.choices and response.choices[1] and
+    provider.request(
+        spawnedNPC[key]["apiKey"],
+        spawnedNPC[key]["model"],
+        spawnedNPC[key]["history"],
+        50,
+        0.7,
+        function(err, response)
+            if err then
+                ErrorNoHalt("Error: " .. err)
+            else
+                -- Check if the response contains valid data
+                if response and response.choices and response.choices[1] and
                 response.choices[1].message and
                 response.choices[1].message.content then
-                -- Extract the GPT-3 response content
-                local gptResponse = response.choices[1].message.content
+                    -- Extract the GPT-3 response content
+                    local gptResponse = response.choices[1].message.content
 
-                table.insert(spawnedNPC[key]["history"], {
-                    role = "assistant",
-                    content = gptResponse
-                })
+                    table.insert(spawnedNPC[key]["history"], {
+                        role = "assistant",
+                        content = gptResponse
+                    })
 
-                -- Print the GPT-3 response to the player's voice chat through tts
-                if spawnedNPC[key]["enableTTS"] then
-                    net.Start("SayTTS")
-                    net.WriteString(key)
-                    net.WriteString(gptResponse)
-                    net.WriteEntity(spawnedNPC[key]["npc"])
-                    net.Broadcast()
+                    -- Print the GPT-3 response to the player's voice chat through tts
+                    if spawnedNPC[key]["enableTTS"] then
+                        net.Start("SayTTS")
+                        net.WriteString(key)
+                        net.WriteString(gptResponse)
+                        net.WriteEntity(spawnedNPC[key]["npc"])
+                        net.Broadcast()
+                    else
+                        local text = "[AI]: " .. gptResponse
+
+                        local chunks = {}
+                        local chunkSize = 200
+
+                        for i = 1, #text, chunkSize do
+                            local startIndex = i
+                            local endIndex = math.min(i + chunkSize - 1, #text) 
+                            table.insert(chunks, text:sub(startIndex, endIndex))
+                        end
+
+                        for _, chunk in ipairs(chunks) do
+                        this:ChatPrint(chunk)
+                        end
+                    end
                 else
-                    this:ChatPrint("[AI]: " .. gptResponse)
+                    -- Print an error message if the response is invalid or contains an error
+                    this:ChatPrint((response and response.error and
+                                    response.error.message) and "Error! " ..
+                                    response.error.message or
+                                    "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
+                                    '')
                 end
-            else
-                -- Print an error message if the response is invalid or contains an error
-                this:ChatPrint((response and response.error and
-                                   response.error.message) and "Error! " ..
-                                   response.error.message or
-                                   "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
-                                   '')
             end
-        end,
-        failed = function(err)
-            -- Print an error message if the HTTP request fails
-            ErrorNoHalt("HTTP Error: " .. err)
         end
-    })
+    )
 end
 
 hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
@@ -196,7 +193,7 @@ end)
 
 -- Reset isAISpawned flag on cleanup
 hook.Add("OnCleanup", "ResetAISpawnedFlag",
-         function(name) spawnedNPC = {} end)
+         function() spawnedNPC = {} end)
 -- Reset isAISpawned flag on admin cleanup
 hook.Add("AdminCleanup", "ResetAISpawnedFlagAdmin",
          function() spawnedNPC = {} end)
