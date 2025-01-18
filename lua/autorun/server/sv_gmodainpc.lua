@@ -32,6 +32,8 @@ net.Receive("SendNPCInfo", function(len, ply)
 
     spawnedNPC[key]["provider"] = data["provider"]
     spawnedNPC[key]["apiKey"] = apiKey
+    spawnedNPC[key]["max_tokens"] = 50
+    spawnedNPC[key]["temperature"] = 0.7
 
     spawnedNPC[key]["enableTTS"] = data["enableTTS"]
 
@@ -112,62 +114,55 @@ meta.sendGPTRequest = function(this, key, author, text)
 
     local provider = providers.get(spawnedNPC[key]["provider"])
 
-    provider.request(
-        spawnedNPC[key]["apiKey"],
-        spawnedNPC[key]["model"],
-        spawnedNPC[key]["history"],
-        50,
-        0.7,
-        function(err, response)
-            if err then
-                ErrorNoHalt("Error: " .. err)
-            else
-                -- Check if the response contains valid data
-                if response and response.choices and response.choices[1] and
-                response.choices[1].message and
-                response.choices[1].message.content then
-                    -- Extract the GPT-3 response content
-                    local gptResponse = response.choices[1].message.content
+    provider.request(spawnedNPC[key], function(err, response)
+        if err then
+            ErrorNoHalt("Error: " .. err)
+        else
+            -- Check if the response contains valid data
+            if response and response.choices and response.choices[1] and
+            response.choices[1].message and
+            response.choices[1].message.content then
+                -- Extract the GPT-3 response content
+                local gptResponse = response.choices[1].message.content
 
-                    table.insert(spawnedNPC[key]["history"], {
-                        role = "assistant",
-                        content = gptResponse
-                    })
+                table.insert(spawnedNPC[key]["history"], {
+                    role = "assistant",
+                    content = gptResponse
+                })
 
-                    -- Print the GPT-3 response to the player's voice chat through tts
-                    if spawnedNPC[key]["enableTTS"] then
-                        net.Start("SayTTS")
-                        net.WriteString(key)
-                        net.WriteString(gptResponse)
-                        net.WriteEntity(spawnedNPC[key]["npc"])
-                        net.Broadcast()
-                    else
-                        local text = "[AI]: " .. gptResponse
-
-                        local chunks = {}
-                        local chunkSize = 200
-
-                        for i = 1, #text, chunkSize do
-                            local startIndex = i
-                            local endIndex = math.min(i + chunkSize - 1, #text) 
-                            table.insert(chunks, text:sub(startIndex, endIndex))
-                        end
-
-                        for _, chunk in ipairs(chunks) do
-                        this:ChatPrint(chunk)
-                        end
-                    end
+                -- Print the GPT-3 response to the player's voice chat through tts
+                if spawnedNPC[key]["enableTTS"] then
+                    net.Start("SayTTS")
+                    net.WriteString(key)
+                    net.WriteString(gptResponse)
+                    net.WriteEntity(spawnedNPC[key]["npc"])
+                    net.Broadcast()
                 else
-                    -- Print an error message if the response is invalid or contains an error
-                    this:ChatPrint((response and response.error and
-                                    response.error.message) and "Error! " ..
-                                    response.error.message or
-                                    "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
-                                    '')
+                    local text = "[AI]: " .. gptResponse
+
+                    local chunks = {}
+                    local chunkSize = 200
+
+                    for i = 1, #text, chunkSize do
+                        local startIndex = i
+                        local endIndex = math.min(i + chunkSize - 1, #text) 
+                        table.insert(chunks, text:sub(startIndex, endIndex))
+                    end
+
+                    for _, chunk in ipairs(chunks) do
+                    this:ChatPrint(chunk)
+                    end
                 end
+            else
+                -- Print an error message if the response is invalid or contains an error
+                this:ChatPrint((response and response.error and
+                                response.error.message) and "Error! " ..
+                                response.error.message or
+                                "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
+                                '')
             end
         end
-    )
+    end)
 end
 
 hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)

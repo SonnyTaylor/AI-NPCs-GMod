@@ -9,16 +9,16 @@ groqProvider.models = {
     "mixtral-8x7b-32768"
 }
 
-function groqProvider.request(apiKey, model, messages, max_tokens, temperature, callback)
+function groqProvider.request(npc, callback)
     local function correctFloatToInt(jsonString)
         return string.gsub(jsonString, '(%d+)%.0', '%1')
     end
 
     local requestBody = {
         model = 'llama-3.1-8b-instant',
-        messages = messages,
-        max_tokens = max_tokens, 
-        temperature = temperature
+        messages = npc["history"],
+        max_tokens = npc["max_tokens"], 
+        temperature = npc["temperature"]
     }
 
     HTTP({
@@ -27,7 +27,7 @@ function groqProvider.request(apiKey, model, messages, max_tokens, temperature, 
         method = "post",
         headers = {
             ["Content-Type"] = "application/json",
-            ["Authorization"] = "Bearer " .. apiKey -- Access the API key from the Global table
+            ["Authorization"] = "Bearer " .. npc["apiKey"] -- Access the API key from the Global table
         },
         body = correctFloatToInt(util.TableToJSON(requestBody)), -- tableToJSON changes integers to float
 
