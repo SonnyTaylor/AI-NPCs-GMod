@@ -31,6 +31,7 @@ net.Receive("SendNPCInfo", function(len, ply)
     spawnedNPC[key]["history"] = {}
 
     spawnedNPC[key]["provider"] = data["provider"]
+    spawnedNPC[key]["hostname"] = data["hostname"]
     spawnedNPC[key]["apiKey"] = apiKey
     spawnedNPC[key]["max_tokens"] = 50
     spawnedNPC[key]["temperature"] = 0.7
@@ -43,8 +44,8 @@ net.Receive("SendNPCInfo", function(len, ply)
                                      personality ..
                                      "if you understand, respond with a hello in character" -- Set the personality in the Global table
 
-    local selectedNPC = data["selectedNPC"]
-    print("Selected NPC: " .. selectedNPC)
+    local NPCClass = data["NPCClass"]
+    local NPCModel = data["NPCModel"]
 
     -- Calculate spawn position in front of the player
     local spawnPosition = ply:GetEyeTrace().HitPos
@@ -53,7 +54,7 @@ net.Receive("SendNPCInfo", function(len, ply)
     local spawnAngle = Angle(0, math.random(0, 360), 0)
 
     -- Spawn the selected NPC with the random angle
-    spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, selectedNPC, key)
+    spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, NPCClass, NPCModel, key)
 
     if IsValid(spawnedNPC) then
         print("NPC spawned successfully!")
@@ -74,13 +75,14 @@ net.Receive("SendNPCInfo", function(len, ply)
 end)
 
 -- Define SpawnNPC function
-function SpawnNPC(pos, ang, npcClass, key)
+function SpawnNPC(pos, ang, npcClass, npcModel, key)
     local npc = ents.Create(npcClass)
     if not IsValid(npc) then return end
 
     npc:SetPos(pos)
     npc:SetAngles(ang)
     npc:Spawn()
+    if npcModel then npc:SetModel(npcModel) end
 
     -- Set up a hook for the NPC's death event
     hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)

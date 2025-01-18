@@ -35,7 +35,7 @@ function ollamaProvider.request(npc, callback)
             response.choices = {
                 {
                     message = {
-                        role = response.message.role
+                        role = response.message.role,
                         content = response.message.content
                     }
                 }

@@ -49,11 +49,10 @@ function drawaihud()
     local providerDropdown = vgui.Create("DComboBox", rightPanel) -- Create a dropdown menu for Provider selection
     providerDropdown:SetPos(10, 80) -- Set the position of the dropdown menu
     providerDropdown:SetSize(170, 20) -- Set the size of the dropdown menu
-    providerDropdown:SetValue("openai") -- Set the default value
-    providerDropdown:AddChoice("openai")
-    providerDropdown:AddChoice("openrouter")
-    providerDropdown:AddChoice("groq")
-    providerDropdown:AddChoice("ollama")
+    providerDropdown:AddChoice("OpenAI", "openai", true)
+    providerDropdown:AddChoice("OpenRouter", "openrouter")
+    providerDropdown:AddChoice("Groq", "groq")
+    providerDropdown:AddChoice("Ollama", "ollama")
 
     local hostnameLabel = vgui.Create("DLabel", rightPanel)
     hostnameLabel:SetText("Hostname:")
@@ -63,8 +62,9 @@ function drawaihud()
     hostnameEntry:SetPos(10, 130)
     hostnameEntry:SetSize(170, 20)
 
-    providerDropdown.OnSelect = function(self, value)
-        if value == "ollama" then
+    function providerDropdown:OnSelect(self, idx, data)
+        print(data)
+        if data == "ollama" then
             hostnameEntry:SetEditable(true)
         else
             hostnameEntry:SetEditable(false)
@@ -88,11 +88,20 @@ function drawaihud()
     npcDropdown:SetValue("npc_citizen") -- Set the default value to "npc_citizen"
 
     -- Get the list of all NPCs and populate the dropdown menu
-    local npcTable = list.Get("NPC")
-    for npcClass, npcData in pairs(npcTable) do
-        npcDropdown:AddChoice(npcClass, npcData.Model)
+    local modelTable = player_manager.AllValidModels()
+    for modelClass, modelPath in pairs(modelTable) do    
+        if not string.match(modelPath, "/c_") and not string.match(modelPath, "/v_") then
+            npcDropdown:AddChoice(modelClass, {
+                model = modelPath,
+                class = modelClass
+            })
+        end
     end
-
+    
+    function npcDropdown:OnSelect(self, idx, data)
+        modelPanel:SetModel(data.model)
+    end
+    
     local apiKeyLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the API key
     apiKeyLabel:SetText("API Key:") -- Set the text of the label
     apiKeyLabel:SetPos(10, 260) -- Set the position of the label
@@ -139,13 +148,21 @@ function drawaihud()
             APIKEY = apiKeyEntry:GetValue()
         end
 
+        local _, selectedNPC = npcDropdown:GetSelected()
+        local _, provider = providerDropdown:GetSelected()
+
         local requestBody = {
             apiKey = APIKEY,
+            hostname = hostnameEntry:GetValue(),
             personality = aiLinkEntry:GetValue(),
-            selectedNPC = npcDropdown:GetValue(),
+            NPCClass = 'npc_citizen',
             enableTTS = TTSButton:GetChecked(),
-            provider = providerDropdown:GetValue()
+            provider = provider
         }
+
+        if selectedNPC and selectedNPC.model then
+            requestBody.NPCModel = selectedNPC.model
+        end
 
         net.Start("SendNPCInfo")
         net.WriteTable(requestBody)
