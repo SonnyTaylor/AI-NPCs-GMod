@@ -88,18 +88,13 @@ function drawaihud()
     npcDropdown:SetValue("npc_citizen") -- Set the default value to "npc_citizen"
 
     -- Get the list of all NPCs and populate the dropdown menu
-    local modelTable = player_manager.AllValidModels()
-    for modelClass, modelPath in pairs(modelTable) do    
-        if not string.match(modelPath, "/c_") and not string.match(modelPath, "/v_") then
-            npcDropdown:AddChoice(modelClass, {
-                model = modelPath,
-                class = modelClass
-            })
-        end
+    local npcTable = ents._SpawnMenuNPCs
+    for npcId, npcData in pairs(npcTable) do    
+        npcDropdown:AddChoice(npcId, npcData)
     end
     
     function npcDropdown:OnSelect(self, idx, data)
-        modelPanel:SetModel(data.model)
+        modelPanel:SetModel(data.Model)
     end
     
     local apiKeyLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the API key
