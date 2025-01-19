@@ -6,6 +6,7 @@ list.Set("DesktopWindows", "ai_menu", {
     init = function(icon, window) drawaihud() end
 })
 
+local modelPanel
 function drawaihud()
     local frame = vgui.Create("DFrame") -- Create a frame for the character selection panel
     frame:SetSize(400, 480) -- Set the size of the frame
@@ -17,7 +18,7 @@ function drawaihud()
     frame:SetScreenLock(true) -- Lock the mouse to the frame
     frame:SetIcon("materials/gptlogo/ChatGPT_logo.svg.png") -- Set the icon of the frame
 
-    local modelPanel = vgui.Create("DModelPanel", frame) -- Create a model panel for displaying the character model
+    modelPanel = vgui.Create("DModelPanel", frame) -- Create a model panel for displaying the character model
     modelPanel:Dock(LEFT) -- Dock the model panel to the left side of the frame
     modelPanel:SetSize(200, 0) -- Set the size of the model panel
     modelPanel:SetModel("models/humans/group01/male_07.mdl") -- Set the model for the panel
@@ -89,12 +90,15 @@ function drawaihud()
 
     -- Get the list of all NPCs and populate the dropdown menu
     local npcTable = ents._SpawnMenuNPCs
-    for npcId, npcData in pairs(npcTable) do    
+    for npcId, npcData in pairs(npcTable) do
+        npcData.Id = npcId  
         npcDropdown:AddChoice(npcId, npcData)
     end
     
     function npcDropdown:OnSelect(self, idx, data)
-        modelPanel:SetModel(data.Model)
+        net.Start("GetNPCModel")
+        net.WriteTable(data)
+        net.SendToServer()
     end
     
     local apiKeyLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the API key
@@ -162,6 +166,12 @@ function drawaihud()
 end
 
 soundList = {}
+
+net.Receive("RespondNPCModel", function()
+    local modelPath = net.ReadString()
+
+    modelPanel:SetModel(modelPath)
+end)
 
 -- TODO Convert this to serverside code so that audio can changed to follow NPC
 net.Receive("SayTTS", function()

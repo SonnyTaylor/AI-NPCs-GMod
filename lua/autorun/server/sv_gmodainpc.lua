@@ -1,4 +1,6 @@
 -- Add network strings for communication between client and server
+util.AddNetworkString("GetNPCModel")
+util.AddNetworkString("RespondNPCModel")
 util.AddNetworkString("SendNPCInfo")
 util.AddNetworkString("SayTTS")
 util.AddNetworkString("TTSPositionUpdate")
@@ -6,6 +8,36 @@ util.AddNetworkString("TTSPositionUpdate")
 providers = include('providers/providers.lua')
 
 local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
+
+net.Receive("GetNPCModel", function(len, ply)
+    local NPCData = net.ReadTable()
+    local model
+
+    if !NPCData.Model then
+        local entity = ents.Create(NPCData.Class)
+        entity:Spawn()
+        
+        -- Hide NPC everywhere except inside model panel
+        entity:SetSaveValue("m_takedamage", 0)
+        entity:SetMoveType(MOVETYPE_NONE)
+        entity:SetSolid(SOLID_NONE)
+        entity:SetRenderMode(RENDERMODE_TRANSALPHA)
+        entity:SetColor(Color(255, 255, 255, 0))
+
+        if !IsValid(entity) then return end
+
+        model = entity:GetModel()
+        
+        entity:Remove()
+    else
+        model = NPCData.Model
+    end
+
+    net.Start("RespondNPCModel")
+    net.WriteString(model)
+    net.Send(ply)
+
+end)
 
 net.Receive("SendNPCInfo", function(len, ply)
     local data = net.ReadTable()
