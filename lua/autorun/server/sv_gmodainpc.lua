@@ -35,7 +35,6 @@ net.Receive("SendNPCInfo", function(len, ply)
     spawnedNPC[key]["apiKey"] = apiKey
     spawnedNPC[key]["max_tokens"] = 50
     spawnedNPC[key]["temperature"] = 0.7
-
     spawnedNPC[key]["enableTTS"] = data["enableTTS"]
 
     local personality = data["personality"]
@@ -44,9 +43,6 @@ net.Receive("SendNPCInfo", function(len, ply)
                                      personality ..
                                      "if you understand, respond with a hello in character" -- Set the personality in the Global table
 
-    local NPCClass = data["NPCClass"]
-    local NPCModel = data["NPCModel"]
-
     -- Calculate spawn position in front of the player
     local spawnPosition = ply:GetEyeTrace().HitPos
 
@@ -54,7 +50,7 @@ net.Receive("SendNPCInfo", function(len, ply)
     local spawnAngle = Angle(0, math.random(0, 360), 0)
 
     -- Spawn the selected NPC with the random angle
-    spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, NPCClass, NPCModel, key)
+    spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, data["NPCData"], key)
 
     if IsValid(spawnedNPC) then
         print("NPC spawned successfully!")
@@ -75,14 +71,14 @@ net.Receive("SendNPCInfo", function(len, ply)
 end)
 
 -- Define SpawnNPC function
-function SpawnNPC(pos, ang, npcClass, npcModel, key)
-    local npc = ents.Create(npcClass)
+function SpawnNPC(pos, ang, npcData, key)
+    local npc = ents.Create(npcData.Class)
     if not IsValid(npc) then return end
 
     npc:SetPos(pos)
     npc:SetAngles(ang)
     npc:Spawn()
-    if npcModel then npc:SetModel(npcModel) end
+    if npcData.Model then npc:SetModel(npcData.Model) end
 
     -- Set up a hook for the NPC's death event
     hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)
@@ -181,10 +177,12 @@ end)
 
 hook.Add("Think", "FollowNPCSound", function()
     for k, v in pairs(spawnedNPC) do
-        net.Start("TTSPositionUpdate")
-        net.WriteString(k)
-        net.WriteVector(v.npc:GetPos())
-        net.Broadcast()
+        if v["enableTTS"] then
+            net.Start("TTSPositionUpdate")
+            net.WriteString(k)
+            net.WriteVector(v.npc:GetPos())
+            net.Broadcast()
+        end
     end
 end)
 

@@ -150,14 +150,10 @@ function drawaihud()
             apiKey = APIKEY,
             hostname = hostnameEntry:GetValue(),
             personality = aiLinkEntry:GetValue(),
-            NPCClass = 'npc_citizen',
+            NPCData = selectedNPC,
             enableTTS = TTSButton:GetChecked(),
             provider = provider
         }
-
-        if selectedNPC and selectedNPC.model then
-            requestBody.NPCModel = selectedNPC.model
-        end
 
         net.Start("SendNPCInfo")
         net.WriteTable(requestBody)
