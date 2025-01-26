@@ -1,19 +1,50 @@
 -- Add network strings for communication between client and server
-util.AddNetworkString("SendAPIKey")
-util.AddNetworkString("SendPersonality")
-util.AddNetworkString("SendSelectedNPC")
+util.AddNetworkString("GetNPCModel")
+util.AddNetworkString("RespondNPCModel")
+util.AddNetworkString("SendNPCInfo")
 util.AddNetworkString("SayTTS")
-util.AddNetworkString("SendTTS")
+util.AddNetworkString("TTSPositionUpdate")
 
-local personality
-local selectedNPC
-local isAISpawned = false -- Flag to track whether AI NPC is already spawned
-local spawnedNPC -- Variable to store the reference to the spawned NPC
-local TTSEnabled = false -- Flag to track whether TTS is enabled
+providers = include('providers/providers.lua')
 
--- Receive API key from client
-net.Receive("SendAPIKey", function(len, ply)
-    apiKey = net.ReadString()
+local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
+
+net.Receive("GetNPCModel", function(len, ply)
+    local NPCData = net.ReadTable()
+    local model
+
+    if !NPCData.Model then
+        local entity = ents.Create(NPCData.Class)
+        entity:Spawn()
+        
+        -- Hide NPC everywhere except inside model panel
+        entity:SetSaveValue("m_takedamage", 0)
+        entity:SetMoveType(MOVETYPE_NONE)
+        entity:SetSolid(SOLID_NONE)
+        entity:SetRenderMode(RENDERMODE_TRANSALPHA)
+        entity:SetColor(Color(255, 255, 255, 0))
+
+        if !IsValid(entity) then return end
+
+        model = entity:GetModel()
+        
+        entity:Remove()
+    else
+        model = NPCData.Model
+    end
+
+    net.Start("RespondNPCModel")
+    net.WriteString(model)
+    net.Send(ply)
+
+end)
+
+net.Receive("SendNPCInfo", function(len, ply)
+    local data = net.ReadTable()
+    print("Data received:")
+    print(data)
+
+    local apiKey = data["apiKey"]
     -- Please dont steal our API key, we are poor
     -- TODO Add Encrpytion Decrpytion crap to obfuscate api key
     if apiKey == "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" then
@@ -21,67 +52,28 @@ net.Receive("SendAPIKey", function(len, ply)
     else
         print("API key received: " .. apiKey)
     end
-    _G.apiKey = apiKey -- Set the API key in the Global table
 
-    if apiKey == "" then ply:ChatPrint("Invalid API key.") end
-end)
-
-net.Receive("SendTTS", function(len, ply)
-    TTSEnabled = net.ReadBool()
-    print("TTS enabled: " .. tostring(TTSEnabled))
-    _G.TTSEnabled = TTSEnabled -- Set the TTS flag in the Global table
-end)
-
--- Receive personality from client
-net.Receive("SendPersonality", function(len, ply)
-    personality = net.ReadString()
-    print("Personality received: " .. personality)
-    _G.personality = "it is your job to act like this personality: " ..
-                         personality ..
-                         "if you understand, respond with a hello in character" -- Set the personality in the Global table
-    _G.personalitynohello =
-        "it is your job to act like this personality and talk like them exactly and you must not talk like Chatgpt at all: " ..
-            personality
-end)
-
--- Define SpawnNPC function
-function SpawnNPC(pos, ang, npcClass)
-    local npc = ents.Create(npcClass)
-    if not IsValid(npc) then return end
-
-    npc:SetPos(pos)
-    npc:SetAngles(ang)
-    npc:Spawn()
-
-    -- Set up a hook for the NPC's death event
-    hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)
-        if npc == spawnedNPC then
-            isAISpawned = false
-            print("AI NPC died or was despawned.")
-            hook.Remove("OnNPCKilled", "OnAIDeath") -- Remove the hook after processing
-        end
-    end)
-
-    -- Set up a hook for the NPC's despawn event
-    hook.Add("EntityRemoved", "OnAIDespawn", function(entity)
-        if entity == spawnedNPC then
-            isAISpawned = false
-            print("AI NPC was despawned.")
-            hook.Remove("EntityRemoved", "OnAIDespawn") -- Remove the hook after processing
-        end
-    end)
-    return npc
-end
-
--- Receive selected NPC from client
-net.Receive("SendSelectedNPC", function(len, ply)
-    if isAISpawned then
-        ply:ChatPrint("AI NPC is already spawned.")
-        return
+    if apiKey == "" then
+        ply:ChatPrint("Invalid API key.")
+        return nil
     end
+    -- Generate a unique key for the NPC
+    local key = table.insert(spawnedNPC, {})
 
-    local selectedNPC = net.ReadString()
-    print("Selected NPC received: " .. selectedNPC)
+    spawnedNPC[key]["history"] = {}
+
+    spawnedNPC[key]["provider"] = data["provider"]
+    spawnedNPC[key]["hostname"] = data["hostname"]
+    spawnedNPC[key]["apiKey"] = apiKey
+    spawnedNPC[key]["max_tokens"] = 50
+    spawnedNPC[key]["temperature"] = 0.7
+    spawnedNPC[key]["enableTTS"] = data["enableTTS"]
+
+    local personality = data["personality"]
+    print("Personality received: " .. personality)
+    spawnedNPC[key]["personality"] = "it is your job to act like this personality: " ..
+                                     personality ..
+                                     "if you understand, respond with a hello in character" -- Set the personality in the Global table
 
     -- Calculate spawn position in front of the player
     local spawnPosition = ply:GetEyeTrace().HitPos
@@ -90,7 +82,7 @@ net.Receive("SendSelectedNPC", function(len, ply)
     local spawnAngle = Angle(0, math.random(0, 360), 0)
 
     -- Spawn the selected NPC with the random angle
-    spawnedNPC = SpawnNPC(spawnPosition, spawnAngle, selectedNPC)
+    spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, data["NPCData"], key)
 
     if IsValid(spawnedNPC) then
         print("NPC spawned successfully!")
@@ -107,75 +99,100 @@ net.Receive("SendSelectedNPC", function(len, ply)
         print("Failed to spawn NPC.")
     end
 
-    ply:sendGPTRequest(_G.personality)
+    ply:sendGPTRequest(key, 'system', spawnedNPC[key]["personality"])
 end)
+
+-- Define SpawnNPC function
+function SpawnNPC(pos, ang, npcData, key)
+    local npc = ents.Create(npcData.Class)
+    if not IsValid(npc) then return end
+
+    npc:SetPos(pos)
+    npc:SetAngles(ang)
+    npc:Spawn()
+    if npcData.Model then npc:SetModel(npcData.Model) end
+
+    -- Set up a hook for the NPC's death event
+    hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)
+        if npc == spawnedNPC[key]["npc"] then
+            print("AI NPC died or was despawned.")
+            spawnedNPC[key] = nil -- Remove NPC from list
+            hook.Remove("OnNPCKilled", "OnAIDeath") -- Remove the hook after processing
+        end
+    end)
+
+    -- Set up a hook for the NPC's despawn event
+    hook.Add("EntityRemoved", "OnAIDespawn", function(entity)
+        if entity == spawnedNPC[key]["npc"] then
+            print("AI NPC was despawned.")
+            spawnedNPC[key] = nil -- Remove NPC from list
+            hook.Remove("EntityRemoved", "OnAIDespawn") -- Remove the hook after processing
+        end
+    end)
+    return npc
+end
 
 -- Find the metatable for the Player type
 local meta = FindMetaTable("Player")
 
 -- Extend the Player metatable to add a custom function for sending requests to GPT-3
-meta.sendGPTRequest = function(this, text)
-    -- Use the HTTP library to make a request to the GPT-3 API
-    local requestBody = {
-        model = "gpt-3.5-turbo",
-        messages = {
-            {
-                role = "user",
-                content = text
-            }
-        },
-        max_tokens = 50, 
-        temperature = 0.7
-    }
+meta.sendGPTRequest = function(this, key, author, text)
+    table.insert(spawnedNPC[key]["history"], {
+        role = author,
+        content = text
+    })
 
-    local function correctFloatToInt(jsonString)
-        return string.gsub(jsonString, '(%d+)%.0', '%1')
-    end
+    local provider = providers.get(spawnedNPC[key]["provider"])
 
-    HTTP({
-        url = "https://api.openai.com/v1/chat/completions",
-        type = "application/json",
-        method = "post",
-        headers = {
-            ["Content-Type"] = "application/json",
-            ["Authorization"] = "Bearer " .. _G.apiKey -- Access the API key from the Global table
-        },
-        body = correctFloatToInt(util.TableToJSON(requestBody)), -- tableToJSON changes integers to float
-
-        success = function(code, body, headers)
-            -- Parse the JSON response from the GPT-3 API
-            local response = util.JSONToTable(body)
-
+    provider.request(spawnedNPC[key], function(err, response)
+        if err then
+            ErrorNoHalt("Error: " .. err)
+        else
             -- Check if the response contains valid data
             if response and response.choices and response.choices[1] and
-                response.choices[1].message and
-                response.choices[1].message.content then
+            response.choices[1].message and
+            response.choices[1].message.content then
                 -- Extract the GPT-3 response content
                 local gptResponse = response.choices[1].message.content
 
+                table.insert(spawnedNPC[key]["history"], {
+                    role = "assistant",
+                    content = gptResponse
+                })
+
                 -- Print the GPT-3 response to the player's voice chat through tts
-                if _G.TTSEnabled then
+                if spawnedNPC[key]["enableTTS"] then
                     net.Start("SayTTS")
+                    net.WriteString(key)
                     net.WriteString(gptResponse)
-                    net.WriteEntity(this)
+                    net.WriteEntity(spawnedNPC[key]["npc"])
                     net.Broadcast()
                 else
-                    this:ChatPrint("[AI]: " .. gptResponse)
+                    local text = "[AI]: " .. gptResponse
+
+                    local chunks = {}
+                    local chunkSize = 200
+
+                    for i = 1, #text, chunkSize do
+                        local startIndex = i
+                        local endIndex = math.min(i + chunkSize - 1, #text) 
+                        table.insert(chunks, text:sub(startIndex, endIndex))
+                    end
+
+                    for _, chunk in ipairs(chunks) do
+                    this:ChatPrint(chunk)
+                    end
                 end
             else
                 -- Print an error message if the response is invalid or contains an error
                 this:ChatPrint((response and response.error and
-                                   response.error.message) and "Error! " ..
-                                   response.error.message or
-                                   "Unknown error! api key is: " .. _G.apiKey ..
-                                   '')
+                                response.error.message) and "Error! " ..
+                                response.error.message or
+                                "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
+                                '')
             end
-        end,
-        failed = function(err)
-            -- Print an error message if the HTTP request fails
-            ErrorNoHalt("HTTP Error: " .. err)
         end
-    })
+    end)
 end
 
 hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
@@ -183,17 +200,30 @@ hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
     local txt = string.sub(text, 5)
     if cmd == "/say" then
         ply:ChatPrint("One moment, please...")
-        ply:sendGPTRequest(_G.personalitynohello .. "RESPONDTOTHIS" .. txt) -- Send the player's message to GPT-3
+        for key, _ in pairs(spawnedNPC) do
+            ply:sendGPTRequest(key, 'user', txt) -- Send the player's message to GPT-3
+        end
         return ""
+    end
+end)
+
+hook.Add("Think", "FollowNPCSound", function()
+    for k, v in pairs(spawnedNPC) do
+        if v["enableTTS"] then
+            net.Start("TTSPositionUpdate")
+            net.WriteString(k)
+            net.WriteVector(v.npc:GetPos())
+            net.Broadcast()
+        end
     end
 end)
 
 -- Reset isAISpawned flag on cleanup
 hook.Add("OnCleanup", "ResetAISpawnedFlag",
-         function(name) isAISpawned = false end)
+         function() spawnedNPC = {} end)
 -- Reset isAISpawned flag on admin cleanup
 hook.Add("AdminCleanup", "ResetAISpawnedFlagAdmin",
-         function() isAISpawned = false end)
+         function() spawnedNPC = {} end)
 
 -- Function to encode the API key
 function encode_key(api_key)
