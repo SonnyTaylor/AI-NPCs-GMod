@@ -11,7 +11,7 @@ if SERVER then
         end
 
         local requestBody = {
-            model = 'huggingfaceh4/zephyr-7b-beta:free',
+            model = npc["model"],
             messages = npc["history"],
             max_tokens = npc["max_tokens"], 
             temperature = npc["temperature"]

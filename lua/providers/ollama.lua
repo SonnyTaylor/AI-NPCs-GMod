@@ -13,7 +13,7 @@ if SERVER then
         end
 
         local requestBody = {
-            model = "llama3:latest",
+            model = npc["model"],
             messages = npc["history"],
             max_tokens = npc["max_tokens"], 
             temperature = npc["temperature"],

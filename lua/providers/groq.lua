@@ -6,7 +6,13 @@ groqProvider.models = {
     "llama-3.1-8b-instant",
     "llama3-70b-8192",
     "llama3-8b-8192",
-    "mixtral-8x7b-32768"
+    "mixtral-8x7b-32768",
+    "allam-2-7b",
+    "deepseek-r1-distill-llama-70b",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "mistral-saba-24b",
+    "qwen-qwq-32b"
 }
 
 if SERVER then
@@ -16,7 +22,7 @@ if SERVER then
         end
 
         local requestBody = {
-            model = 'llama-3.1-8b-instant',
+            model = npc["model"],
             messages = npc["history"],
             max_tokens = npc["max_tokens"], 
             temperature = npc["temperature"]
