@@ -20,155 +20,152 @@ function drawaihud()
     frame:SetScreenLock(true) -- Lock the mouse to the frame
     frame:SetIcon("materials/gptlogo/ChatGPT_logo.svg.png") -- Set the icon of the frame
 
-    modelPanel = vgui.Create("DModelPanel", frame) -- Create a model panel for displaying the character model
-    modelPanel:Dock(LEFT) -- Dock the model panel to the left side of the frame
-    modelPanel:SetSize(200, 0) -- Set the size of the model panel
-    modelPanel:SetModel("models/humans/group01/male_07.mdl") -- Set the model for the panel
-    modelPanel:SetFOV(48) -- Set the field of view to make the model appear bigger
-
-    -- Increase the rotation speed of the model
+    -- Left: 3D model display
+    modelPanel = vgui.Create("DModelPanel", frame)
+    modelPanel:Dock(LEFT)
+    modelPanel:SetSize(200, 0)
+    modelPanel:SetModel("models/humans/group01/male_07.mdl")
+    modelPanel:SetFOV(48)
     modelPanel.LayoutEntity = function(self, ent)
         self:RunAnimation()
-        ent:SetAngles(Angle(0, RealTime() * 100, 0)) -- Increase the rotation speed by modifying the second parameter
+        ent:SetAngles(Angle(0, RealTime() * 100, 0))
     end
 
-    local rightPanel = vgui.Create("DPanel", frame) -- Create a panel for the right side controls
-    rightPanel:Dock(FILL) -- Fill the remaining space
-    rightPanel:SetBackgroundColor(Color(116, 170, 156)) -- Set a light background color
+    -- Right: Controls
+    local rightPanel = vgui.Create("DPanel", frame)
+    rightPanel:Dock(FILL)
+    rightPanel:SetBackgroundColor(Color(116, 170, 156))
 
-    local nameLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the AI personality
-    nameLabel:SetText("AI Personality:") -- Set the text of the label
-    nameLabel:SetPos(10, 10) -- Set the position of the label
-    nameLabel:SetSize(170, 20) -- Set the size of the label
+    -- AI Personality
+    local nameLabel = vgui.Create("DLabel", rightPanel)
+    nameLabel:SetText("AI Personality:")
+    nameLabel:SetPos(10, 10)
+    nameLabel:SetSize(170, 20)
+    local aiLinkEntry = vgui.Create("DTextEntry", rightPanel)
+    aiLinkEntry:SetPos(10, 30)
+    aiLinkEntry:SetSize(170, 20)
 
-    local aiLinkEntry = vgui.Create("DTextEntry", rightPanel) -- Create a text entry for the AI personality
-    aiLinkEntry:SetPos(10, 30) -- Set the position of the text entry
-    aiLinkEntry:SetSize(170, 20) -- Set the size of the text entry
-
-    local providerLabel = vgui.Create("DLabel", rightPanel) -- Create a label for Provider selection
-    providerLabel:SetText("Provider:") -- Set the text of the label
-    providerLabel:SetPos(10, 60) -- Set the position of the label
-
-    local providerDropdown = vgui.Create("DComboBox", rightPanel) -- Create a dropdown menu for Provider selection
-    providerDropdown:SetPos(10, 80) -- Set the position of the dropdown menu
-    providerDropdown:SetSize(170, 20) -- Set the size of the dropdown menu
+    -- Provider selection
+    local providerLabel = vgui.Create("DLabel", rightPanel)
+    providerLabel:SetText("Provider:")
+    providerLabel:SetPos(10, 60)
+    local providerDropdown = vgui.Create("DComboBox", rightPanel)
+    providerDropdown:SetPos(10, 80)
+    providerDropdown:SetSize(170, 20)
     providerDropdown:AddChoice("OpenAI", "openai", true)
     providerDropdown:AddChoice("OpenRouter", "openrouter")
     providerDropdown:AddChoice("Groq", "groq")
     providerDropdown:AddChoice("Ollama", "ollama")
-    
-    
+
+    -- Hostname entry
     local hostnameLabel = vgui.Create("DLabel", rightPanel)
     hostnameLabel:SetText("Hostname:")
     hostnameLabel:SetPos(10, 110)
-
     local hostnameEntry = vgui.Create("DTextEntry", rightPanel)
     hostnameEntry:SetPos(10, 130)
     hostnameEntry:SetSize(170, 20)
 
-
+    -- Model selection or input
     local modelLabel = vgui.Create("DLabel", rightPanel)
     modelLabel:SetText("Model:")
     modelLabel:SetPos(10, 160)
-    
     local modelDropdown = vgui.Create("DComboBox", rightPanel)
     modelDropdown:SetPos(10, 180)
-    for _, model in ipairs(providers.get("openai").models) do
-        modelDropdown:AddChoice(model)
+    modelDropdown:SetSize(170, 20)
+    local modelTextEntry = vgui.Create("DTextEntry", rightPanel)
+    modelTextEntry:SetPos(10, 180)
+    modelTextEntry:SetSize(170, 20)
+    modelTextEntry:SetVisible(false)
+
+    -- Populate initial model list
+    local initialModels = providers.get("openai").models or {}
+    if #initialModels > 0 then
+        for _, m in ipairs(initialModels) do modelDropdown:AddChoice(m) end
+        modelDropdown:ChooseOptionID(1)
+    else
+        modelDropdown:SetVisible(false)
+        modelTextEntry:SetVisible(true)
     end
-    
+
+    -- Provider change handler
     function providerDropdown:OnSelect(self, idx, data)
-        print(data)
         if data == "ollama" then
             hostnameEntry:SetEditable(true)
         else
             hostnameEntry:SetEditable(false)
         end
 
-        -- Change list of available model
+        local models = providers.get(data).models or {}
         modelDropdown:Clear()
-        for _, model in ipairs(providers.get(data).models) do
-            modelDropdown:AddChoice(model)
+        if #models > 0 then
+            modelDropdown:SetVisible(true)
+            modelTextEntry:SetVisible(false)
+            for _, m in ipairs(models) do modelDropdown:AddChoice(m) end
+            modelDropdown:ChooseOptionID(1)
+        else
+            modelDropdown:SetVisible(false)
+            modelTextEntry:SetVisible(true)
         end
     end
 
-    local npcLabel = vgui.Create("DLabel", rightPanel) -- Create a label for NPC selection
-    npcLabel:SetText("Select NPC:") -- Set the text of the label
-    npcLabel:SetPos(10, 210) -- Set the position of the label
-    
-    local npcDropdown = vgui.Create("DComboBox", rightPanel) -- Create a dropdown menu for NPC selection
-    npcDropdown:SetPos(10, 230) -- Set the position of the dropdown menu
-    npcDropdown:SetSize(170, 20) -- Set the size of the dropdown menu
-    npcDropdown:SetValue("npc_citizen") -- Set the default value to "npc_citizen"
-
+    -- NPC selection
+    local npcLabel = vgui.Create("DLabel", rightPanel)
+    npcLabel:SetText("Select NPC:")
+    npcLabel:SetPos(10, 210)
+    local npcDropdown = vgui.Create("DComboBox", rightPanel)
+    npcDropdown:SetPos(10, 230)
+    npcDropdown:SetSize(170, 20)
+    npcDropdown:SetValue("npc_citizen")
     function npcDropdown:OnSelect(self, idx, data)
-        PrintTable(data)
         net.Start("GetNPCModel")
         net.WriteTable(data)
         net.SendToServer()
     end
-    
-    -- Get the list of all NPCs and populate the dropdown menu
-    local npcTable = ents._SpawnMenuNPCs
-    for npcId, npcData in pairs(npcTable) do
+    for npcId, npcData in pairs(ents._SpawnMenuNPCs) do
         npcData.Id = npcId
         npcDropdown:AddChoice(npcId, npcData)
     end
-
     npcDropdown:ChooseOptionID(1)
 
-    local apiKeyLabel = vgui.Create("DLabel", rightPanel) -- Create a label for the API key
-    apiKeyLabel:SetText("API Key:") -- Set the text of the label
-    apiKeyLabel:SetPos(10, 260) -- Set the position of the label
-    
-    local apiKeyEntry = vgui.Create("DTextEntry", rightPanel) -- Create a text entry for the API key
-    apiKeyEntry:SetPos(10, 280) -- Set the position of the text entry
-    apiKeyEntry:SetSize(170, 20) -- Set the size of the text entry
-    apiKeyEntry:SetText(inputapikey) -- Set the default text of the text entry
-    
-    
-    local freeAPIButton = vgui.Create("DCheckBoxLabel", rightPanel) -- Create a checkbox for enabling "Free API"
-    freeAPIButton:SetText("Free API") -- Set the text of the checkbox
-    freeAPIButton:SetPos(10, 310) -- Set the position of the checkbox
-    freeAPIButton:SetSize(170, 20) -- Set the size of the checkbox
-    
+    -- API key
+    local apiKeyLabel = vgui.Create("DLabel", rightPanel)
+    apiKeyLabel:SetText("API Key:")
+    apiKeyLabel:SetPos(10, 260)
+    local apiKeyEntry = vgui.Create("DTextEntry", rightPanel)
+    apiKeyEntry:SetPos(10, 280)
+    apiKeyEntry:SetSize(170, 20)
+    apiKeyEntry:SetText(inputapikey)
+
+    -- Free API toggle
+    local freeAPIButton = vgui.Create("DCheckBoxLabel", rightPanel)
+    freeAPIButton:SetText("Free API")
+    freeAPIButton:SetPos(10, 310)
+    freeAPIButton:SetSize(170, 20)
     freeAPIButton.OnChange = function(self, value)
-        if value then
-            apiKeyEntry:SetText("") -- Blank out the API key field
-            apiKeyEntry:SetEditable(false) -- Disable editing of the API key field
-        else
-            apiKeyEntry:SetEditable(true) -- Enable editing of the API key field
-        end
+        apiKeyEntry:SetText(value and "" or apiKeyEntry:GetText())
+        apiKeyEntry:SetEditable(not value)
     end
 
-
-    local TTSButton = vgui.Create("DCheckBoxLabel", rightPanel) -- Create a button for creating the NPC
-    TTSButton:SetText("Text to Speech") -- Set the text of the button
-    TTSButton:SetPos(10, 330) -- Nice, Set the position of the button
-    TTSButton:SetSize(170, 20) -- Set the size of the button
+    -- Text-to-speech toggle
+    local TTSButton = vgui.Create("DCheckBoxLabel", rightPanel)
+    TTSButton:SetText("Text to Speech")
+    TTSButton:SetPos(10, 330)
+    TTSButton:SetSize(170, 20)
     TTSButton:SetValue(0)
 
-    local createButton = vgui.Create("DButton", rightPanel) -- Create a button for creating the NPC
-    createButton:SetText("Create NPC") -- Set the text of the button
-    createButton:SetPos(10, 360) -- Set the position of the button
-    createButton:SetSize(170, 60) -- Set the size of the button
-
-    
-
+    -- Create NPC button
+    local createButton = vgui.Create("DButton", rightPanel)
+    createButton:SetText("Create NPC")
+    createButton:SetPos(10, 360)
+    createButton:SetSize(170, 60)
     createButton.DoClick = function()
         inputapikey = apiKeyEntry:GetValue()
-
-        -- Send API key
-        if freeAPIButton:GetChecked() then
-            -- Please dont steal our API key, we are poor
-            -- TODO Change this to a encrypted key using server encrypt function
-            APIKEY = "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"
-        else
-            APIKEY = apiKeyEntry:GetValue()
-        end
+        APIKEY = freeAPIButton:GetChecked() and "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" or apiKeyEntry:GetValue()
 
         local _, selectedNPC = npcDropdown:GetSelected()
         local _, provider = providerDropdown:GetSelected()
+        -- Choose model or input
+        local chosenModel = modelDropdown:IsVisible() and modelDropdown:GetValue() or modelTextEntry:GetValue()
 
         local requestBody = {
             apiKey = APIKEY,
@@ -176,11 +173,11 @@ function drawaihud()
             personality = aiLinkEntry:GetValue(),
             NPCData = selectedNPC,
             enableTTS = TTSButton:GetChecked(),
-            provider = provider
+            provider = provider,
+            model = chosenModel,
         }
 
         PrintTable(requestBody)
-
         net.Start("SendNPCInfo")
         net.WriteTable(requestBody)
         net.SendToServer()
