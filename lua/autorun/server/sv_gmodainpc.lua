@@ -36,7 +36,6 @@ net.Receive("GetNPCModel", function(len, ply)
     net.Start("RespondNPCModel")
     net.WriteString(model)
     net.Send(ply)
-
 end)
 
 net.Receive("SendNPCInfo", function(len, ply)
@@ -57,6 +56,20 @@ net.Receive("SendNPCInfo", function(len, ply)
         ply:ChatPrint("Invalid API key.")
         return nil
     end
+
+    -- Ensure NPCData is provided
+    local npcData = data["NPCData"] or data["npcData"]
+    if not npcData then
+        ply:ChatPrint("Error: NPC data missing. Cannot spawn NPC.")
+        return
+    end
+
+    -- Fallback to set default class if not present
+    if not npcData.Class then
+        npcData.Class = "npc_citizen"
+        print("Warning: npcData.Class was nil, defaulted to 'npc_citizen'")
+    end
+
     -- Generate a unique key for the NPC
     local key = table.insert(spawnedNPC, {})
 
@@ -68,6 +81,7 @@ net.Receive("SendNPCInfo", function(len, ply)
     spawnedNPC[key]["max_tokens"] = 50
     spawnedNPC[key]["temperature"] = 0.7
     spawnedNPC[key]["enableTTS"] = data["enableTTS"]
+    spawnedNPC[key]["model"] = data["model"]
 
     local personality = data["personality"]
     print("Personality received: " .. personality)
@@ -84,28 +98,28 @@ net.Receive("SendNPCInfo", function(len, ply)
     -- Spawn the selected NPC with the random angle
     spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, data["NPCData"], key)
 
-    if IsValid(spawnedNPC) then
+    if spawnedNPC[key] and IsValid(spawnedNPC[key]["npc"]) then
         print("NPC spawned successfully!")
-        isAISpawned = true
 
         -- Enable navigation for the NPC
-        spawnedNPC:SetNPCState(NPC_STATE_SCRIPT)
-        spawnedNPC:SetSchedule(SCHED_IDLE_STAND)
+        spawnedNPC[key]["npc"]:SetNPCState(NPC_STATE_SCRIPT)
+        spawnedNPC[key]["npc"]:SetSchedule(SCHED_IDLE_STAND)
 
         -- Walk to the player
-        spawnedNPC:SetLastPosition(ply:GetPos())
-        spawnedNPC:SetSchedule(SCHED_FORCED_GO_RUN)
+        spawnedNPC[key]["npc"]:SetLastPosition(ply:GetPos())
+        spawnedNPC[key]["npc"]:SetSchedule(SCHED_FORCED_GO_RUN)
+
+        ply:sendGPTRequest(key, 'system', spawnedNPC[key]["personality"])
     else
+        table.remove(spawnedNPC, key)
         print("Failed to spawn NPC.")
     end
-
-    ply:sendGPTRequest(key, 'system', spawnedNPC[key]["personality"])
 end)
 
 -- Define SpawnNPC function
 function SpawnNPC(pos, ang, npcData, key)
     local npc = ents.Create(npcData.Class)
-    if not IsValid(npc) then return end
+    if !IsValid(npc) then return end
 
     npc:SetPos(pos)
     npc:SetAngles(ang)
@@ -113,20 +127,20 @@ function SpawnNPC(pos, ang, npcData, key)
     if npcData.Model then npc:SetModel(npcData.Model) end
 
     -- Set up a hook for the NPC's death event
-    hook.Add("OnNPCKilled", "OnAIDeath", function(npc, attacker, inflictor)
-        if npc == spawnedNPC[key]["npc"] then
-            print("AI NPC died or was despawned.")
+    hook.Add("OnNPCKilled", "OnAIDeath_" .. key, function(npc, attacker, inflictor)
+        if IsValid(entity) and spawnedNPC[key] and entity == spawnedNPC[key]["npc"] then
+            print("AI NPC died or was despawned")
             spawnedNPC[key] = nil -- Remove NPC from list
-            hook.Remove("OnNPCKilled", "OnAIDeath") -- Remove the hook after processing
+            hook.Remove("OnNPCKilled", "OnAIDeath_" .. key) -- Remove the hook after processing
         end
     end)
 
     -- Set up a hook for the NPC's despawn event
-    hook.Add("EntityRemoved", "OnAIDespawn", function(entity)
-        if entity == spawnedNPC[key]["npc"] then
-            print("AI NPC was despawned.")
+    hook.Add("EntityRemoved", "OnAIDespawn_" .. key, function(entity)
+        if IsValid(entity) and spawnedNPC[key] and entity == spawnedNPC[key]["npc"] then
+                print("AI NPC was despawned.")
             spawnedNPC[key] = nil -- Remove NPC from list
-            hook.Remove("EntityRemoved", "OnAIDespawn") -- Remove the hook after processing
+            hook.Remove("EntityRemoved", "OnAIDespawn_" .. key) -- Remove the hook after processing
         end
     end)
     return npc
