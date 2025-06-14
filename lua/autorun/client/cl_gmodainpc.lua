@@ -121,7 +121,7 @@ function drawaihud()
         net.WriteTable(data)
         net.SendToServer()
     end
-    for npcId, npcData in pairs(ents._SpawnMenuNPCs) do
+    for npcId, npcData in pairs(list.Get("NPC")) do
         npcData.Id = npcId
         npcDropdown:AddChoice(npcId, npcData)
     end
