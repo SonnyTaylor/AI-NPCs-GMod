@@ -2,6 +2,7 @@ local providers = {}
 
 function providers.get(name)
     print(name)
+    local provider
     if name == "openai" then
         provider = include("providers/openai.lua")
     elseif name == "ollama" then

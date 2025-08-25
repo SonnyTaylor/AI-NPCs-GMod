@@ -1,4 +1,4 @@
-providers = include('providers/providers.lua')
+local providers = include('providers/providers.lua')
 
 -- Context menu button
 local inputapikey = ""
@@ -160,7 +160,9 @@ function drawaihud()
     createButton:SetSize(170, 60)
     createButton.DoClick = function()
         inputapikey = apiKeyEntry:GetValue()
-        APIKEY = freeAPIButton:GetChecked() and "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" or apiKeyEntry:GetValue()
+        local APIKEY = freeAPIButton:GetChecked() and
+            "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" or
+            apiKeyEntry:GetValue()
 
         local _, selectedNPC = npcDropdown:GetSelected()
         local _, provider = providerDropdown:GetSelected()
@@ -184,12 +186,13 @@ function drawaihud()
     end
 end
 
-soundList = {}
+local soundList = {}
 
 net.Receive("RespondNPCModel", function()
     local modelPath = net.ReadString()
-
-    modelPanel:SetModel(modelPath)
+    if modelPanel and IsValid(modelPanel) then
+        modelPanel:SetModel(modelPath)
+    end
 end)
 
 -- TODO Convert this to serverside code so that audio can changed to follow NPC

@@ -5,7 +5,7 @@ util.AddNetworkString("SendNPCInfo")
 util.AddNetworkString("SayTTS")
 util.AddNetworkString("TTSPositionUpdate")
 
-providers = include('providers/providers.lua')
+local providers = include('providers/providers.lua')
 
 local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
 
@@ -13,7 +13,7 @@ net.Receive("GetNPCModel", function(len, ply)
     local NPCData = net.ReadTable()
     local model
 
-    if !NPCData.Model then
+    if not NPCData.Model then
         local entity = ents.Create(NPCData.Class)
         entity:Spawn()
         
@@ -24,7 +24,7 @@ net.Receive("GetNPCModel", function(len, ply)
         entity:SetRenderMode(RENDERMODE_TRANSALPHA)
         entity:SetColor(Color(255, 255, 255, 0))
 
-        if !IsValid(entity) then return end
+    if not IsValid(entity) then return end
 
         model = entity:GetModel()
         
@@ -40,8 +40,7 @@ end)
 
 net.Receive("SendNPCInfo", function(len, ply)
     local data = net.ReadTable()
-    print("Data received:")
-    print(data)
+    print("Data received: " .. util.TableToJSON(data))
 
     local apiKey = data["apiKey"]
     -- Please dont steal our API key, we are poor
@@ -71,7 +70,8 @@ net.Receive("SendNPCInfo", function(len, ply)
     end
 
     -- Generate a unique key for the NPC
-    local key = table.insert(spawnedNPC, {})
+    table.insert(spawnedNPC, {})
+    local key = #spawnedNPC
 
     spawnedNPC[key]["history"] = {}
 
@@ -119,7 +119,7 @@ end)
 -- Define SpawnNPC function
 function SpawnNPC(pos, ang, npcData, key)
     local npc = ents.Create(npcData.Class)
-    if !IsValid(npc) then return end
+    if not IsValid(npc) then return end
 
     npc:SetPos(pos)
     npc:SetAngles(ang)
@@ -127,8 +127,8 @@ function SpawnNPC(pos, ang, npcData, key)
     if npcData.Model then npc:SetModel(npcData.Model) end
 
     -- Set up a hook for the NPC's death event
-    hook.Add("OnNPCKilled", "OnAIDeath_" .. key, function(npc, attacker, inflictor)
-        if IsValid(entity) and spawnedNPC[key] and entity == spawnedNPC[key]["npc"] then
+    hook.Add("OnNPCKilled", "OnAIDeath_" .. key, function(deadNPC, attacker, inflictor)
+        if IsValid(deadNPC) and spawnedNPC[key] and deadNPC == spawnedNPC[key].npc then
             print("AI NPC died or was despawned")
             spawnedNPC[key] = nil -- Remove NPC from list
             hook.Remove("OnNPCKilled", "OnAIDeath_" .. key) -- Remove the hook after processing
@@ -136,9 +136,9 @@ function SpawnNPC(pos, ang, npcData, key)
     end)
 
     -- Set up a hook for the NPC's despawn event
-    hook.Add("EntityRemoved", "OnAIDespawn_" .. key, function(entity)
-        if IsValid(entity) and spawnedNPC[key] and entity == spawnedNPC[key]["npc"] then
-                print("AI NPC was despawned.")
+    hook.Add("EntityRemoved", "OnAIDespawn_" .. key, function(removedEnt)
+        if IsValid(removedEnt) and spawnedNPC[key] and removedEnt == spawnedNPC[key].npc then
+            print("AI NPC was despawned.")
             spawnedNPC[key] = nil -- Remove NPC from list
             hook.Remove("EntityRemoved", "OnAIDespawn_" .. key) -- Remove the hook after processing
         end
