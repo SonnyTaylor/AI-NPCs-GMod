@@ -1,265 +1,525 @@
--- Add network strings for communication between client and server
-util.AddNetworkString("GetNPCModel")
-util.AddNetworkString("RespondNPCModel")
-util.AddNetworkString("SendNPCInfo")
-util.AddNetworkString("SayTTS")
-util.AddNetworkString("TTSPositionUpdate")
+--[[
+    AI NPCs — server
 
-include("autorun/sh_ainpcs_debug.lua")
+    Owns NPC state, chat routing, provider requests, and enforces the
+    admin / cooldown / per-player limits. All player input is validated
+    server-side. API keys never leave this file except inside HTTP requests.
+]]
 
-local providers = include('providers/providers.lua')
+local providers = include("providers/providers.lua")
 
-local spawnedNPC = {} -- Variable to store the reference to the spawned NPC
+-- =============================================================================
+-- Convars
+-- =============================================================================
 
-net.Receive("GetNPCModel", function(len, ply)
-    local NPCData = net.ReadTable()
-    local model
+local CV_ENABLED       = CreateConVar("ainpc_enabled",               "1", FCVAR_ARCHIVE, "Master switch for the AI NPCs addon.")
+local CV_ADMIN_ONLY    = CreateConVar("ainpc_admin_only",            "0", FCVAR_ARCHIVE, "If 1, only admins can spawn AI NPCs.")
+local CV_MAX_PER_PLY   = CreateConVar("ainpc_max_per_player",        "3", FCVAR_ARCHIVE, "Maximum AI NPCs a single player may own at once.")
+local CV_COOLDOWN      = CreateConVar("ainpc_cooldown_seconds",      "5", FCVAR_ARCHIVE, "Cooldown between NPC spawns per player (seconds).")
+local CV_CHAT_COOLDOWN = CreateConVar("ainpc_chat_cooldown_seconds", "1.5", FCVAR_ARCHIVE, "Cooldown between chat messages per player (seconds).")
+local CV_PROXIMITY     = CreateConVar("ainpc_proximity_chat",        "1", FCVAR_ARCHIVE, "If 1, chat messages auto-route to the nearest AI NPC within range.")
+local CV_PROXIMITY_R   = CreateConVar("ainpc_proximity_range",       "250", FCVAR_ARCHIVE, "Max distance (units) for proximity chat auto-routing.")
+local CV_INTERACT_R    = CreateConVar("ainpc_interact_range",        "140", FCVAR_ARCHIVE, "Max distance (units) for pressing E to open the chat UI.")
+local CV_OR_REFRESH    = CreateConVar("ainpc_openrouter_autorefresh", "1", FCVAR_ARCHIVE, "If 1, periodically fetch the current OpenRouter free-model list.")
+local CV_ALLOWED_TTS   = CreateConVar("ainpc_tts_allowed",           "1", FCVAR_ARCHIVE, "If 1, clients may enable TTS playback.")
 
-    if not NPCData.Model then
-        local entity = ents.Create(NPCData.Class)
-        entity:Spawn()
-        
-        -- Hide NPC everywhere except inside model panel
-        entity:SetSaveValue("m_takedamage", 0)
-        entity:SetMoveType(MOVETYPE_NONE)
-        entity:SetSolid(SOLID_NONE)
-        entity:SetRenderMode(RENDERMODE_TRANSALPHA)
-        entity:SetColor(Color(255, 255, 255, 0))
+-- =============================================================================
+-- State
+-- =============================================================================
 
-    if not IsValid(entity) then return end
+-- NPCs[entIndex] = {
+--   ent, owner, personality, provider, model, apiKey, hostname,
+--   max_tokens, temperature, reasoning, enableTTS, history, name, thinking
+-- }
+local NPCs = {}
 
-        model = entity:GetModel()
-        
-        entity:Remove()
-    else
-        model = NPCData.Model
+-- per-player cooldown tracking, keyed by SteamID64 so reconnects reset
+local NextSpawn = {}
+local NextChat  = {}
+local NextUse   = {}
+
+local function plyKey(ply)
+    if not IsValid(ply) then return "_" end
+    return ply:SteamID64() or ("ent_" .. ply:EntIndex())
+end
+
+local function countNPCsOwnedBy(ply)
+    local key = plyKey(ply)
+    local n = 0
+    for _, rec in pairs(NPCs) do
+        if IsValid(rec.ent) and rec.ownerKey == key then n = n + 1 end
+    end
+    return n
+end
+
+local function sendToast(ply, text, kind)
+    if not IsValid(ply) then return end
+    net.Start("AINPC_Toast")
+    net.WriteString(text or "")
+    net.WriteString(kind or "info")
+    net.Send(ply)
+end
+
+local function setThinking(rec, isThinking)
+    if not IsValid(rec.ent) then return end
+    rec.thinking = isThinking and true or false
+    rec.ent:SetNWBool("AINPCThinking", rec.thinking)
+end
+
+-- =============================================================================
+-- NPC lookup / spawn
+-- =============================================================================
+
+local function lookupNPCData(class)
+    local registry = list.Get("NPC") or {}
+    return registry[class]
+end
+
+local function findSafeSpawnPos(ply)
+    local tr = ply:GetEyeTrace()
+    local pos = tr.HitPos + tr.HitNormal * 16
+
+    -- If we hit the skybox, drop one in front of the player instead.
+    if bit.band(util.PointContents(pos), CONTENTS_SOLID) ~= 0 or tr.HitSky then
+        pos = ply:GetPos() + ply:GetForward() * 80
     end
 
-    net.Start("RespondNPCModel")
+    -- Ground-snap so NPCs don't float.
+    local down = util.TraceLine({
+        start = pos + Vector(0, 0, 16),
+        endpos = pos - Vector(0, 0, 256),
+        filter = ply,
+        mask = MASK_NPCWORLDSTATIC,
+    })
+    if down.Hit then pos = down.HitPos + Vector(0, 0, 2) end
+
+    return pos
+end
+
+local function cleanupNPC(entIndex)
+    local rec = NPCs[entIndex]
+    if not rec then return end
+    hook.Remove("OnNPCKilled", "AINPC_Death_" .. entIndex)
+    if IsValid(rec.ent) then rec.ent:SetNWBool("IsAINPC", false) end
+    NPCs[entIndex] = nil
+end
+
+local function cleanupAll()
+    for idx, rec in pairs(NPCs) do
+        hook.Remove("OnNPCKilled", "AINPC_Death_" .. idx)
+        if IsValid(rec.ent) then rec.ent:Remove() end
+    end
+    NPCs = {}
+end
+
+local function spawnAINPC(ply, data)
+    if not CV_ENABLED:GetBool() then
+        sendToast(ply, "AI NPCs are disabled on this server.", "error")
+        return
+    end
+
+    if CV_ADMIN_ONLY:GetBool() and not ply:IsAdmin() then
+        sendToast(ply, "Only admins can spawn AI NPCs on this server.", "error")
+        return
+    end
+
+    local now = CurTime()
+    local key = plyKey(ply)
+    if (NextSpawn[key] or 0) > now then
+        sendToast(ply, string.format("Wait %.1fs before spawning another NPC.", (NextSpawn[key] or 0) - now), "error")
+        return
+    end
+
+    if countNPCsOwnedBy(ply) >= CV_MAX_PER_PLY:GetInt() then
+        sendToast(ply, "You already have the maximum number of AI NPCs spawned.", "error")
+        return
+    end
+
+    local provider = providers.get(data.provider or "")
+    if not provider then
+        sendToast(ply, "Unknown provider: " .. tostring(data.provider), "error")
+        return
+    end
+
+    if provider.id ~= "ollama" and AINPCS.IsBlank(data.apiKey) then
+        sendToast(ply, "API key required for " .. provider.label .. ". Click the 'Get Key' button in the panel.", "error")
+        return
+    end
+
+    local npcData = lookupNPCData(data.class)
+    if not npcData then
+        sendToast(ply, "Unknown NPC class: " .. tostring(data.class), "error")
+        return
+    end
+
+    local entClass = npcData.Class or data.class
+    local ent = ents.Create(entClass)
+    if not IsValid(ent) then
+        sendToast(ply, "Failed to create entity of class " .. tostring(entClass), "error")
+        return
+    end
+
+    local pos = findSafeSpawnPos(ply)
+    ent:SetPos(pos)
+    ent:SetAngles(Angle(0, math.random(0, 360), 0))
+    if npcData.Model then ent:SetModel(npcData.Model) end
+    if npcData.KeyValues then
+        for k, v in pairs(npcData.KeyValues) do ent:SetKeyValue(k, tostring(v)) end
+    end
+    if npcData.SpawnFlags then
+        ent:SetKeyValue("spawnflags", tostring(npcData.SpawnFlags))
+    end
+    ent:Spawn()
+    ent:Activate()
+
+    local displayName = AINPCS.Trim(data.name or "")
+    if displayName == "" then displayName = "NPC" end
+
+    ent:SetNWBool("IsAINPC", true)
+    ent:SetNWString("AINPCName", displayName)
+    ent:SetNWString("AINPCOwnerName", ply:Nick())
+    ent:SetNWBool("AINPCThinking", false)
+
+    local personality = AINPCS.Trim(data.personality or "")
+    if personality == "" then
+        personality = "a friendly generic NPC with no particular background"
+    end
+
+    local systemPrompt = table.concat({
+        "You are roleplaying as a non-player character inside Garry's Mod.",
+        "Stay fully in character at all times. Do not break the fourth wall.",
+        "Keep responses short (1-3 sentences) unless the player asks for more.",
+        "Your character: " .. personality,
+        "Your name is: " .. displayName,
+        "Respond naturally to what the player says.",
+    }, "\n")
+
+    local rec = {
+        ent         = ent,
+        owner       = ply,
+        ownerKey    = key,
+        provider    = provider.id,
+        apiKey      = data.apiKey or "",
+        hostname    = data.hostname or "",
+        model       = data.model or "",
+        max_tokens  = tonumber(data.max_tokens) or 2048,
+        temperature = tonumber(data.temperature),
+        reasoning   = data.reasoning,
+        enableTTS   = CV_ALLOWED_TTS:GetBool() and (data.enableTTS == true),
+        ttsVoice    = data.ttsVoice or "streamelements",
+        name        = displayName,
+        personality = personality,
+        history     = {
+            { role = "system", content = systemPrompt },
+        },
+        thinking    = false,
+    }
+
+    NPCs[ent:EntIndex()] = rec
+
+    hook.Add("OnNPCKilled", "AINPC_Death_" .. ent:EntIndex(), function(deadNPC)
+        if deadNPC == ent then cleanupNPC(ent:EntIndex()) end
+    end)
+
+    NextSpawn[key] = now + CV_COOLDOWN:GetFloat()
+
+    net.Start("AINPC_SpawnResult")
+    net.WriteBool(true)
+    net.WriteEntity(ent)
+    net.WriteString(displayName)
+    net.Send(ply)
+
+    sendToast(ply, displayName .. " spawned. Walk up and press E to talk.", "success")
+    AINPCS.DebugPrint("[AI-NPCs] " .. ply:Nick() .. " spawned " .. displayName .. " (" .. entClass .. ") via " .. provider.id)
+end
+
+-- =============================================================================
+-- Chat pipeline
+-- =============================================================================
+
+local function sendChatReply(rec, text, isError)
+    if not IsValid(rec.ent) then return end
+    net.Start("AINPC_ChatReply")
+    net.WriteEntity(rec.ent)
+    net.WriteString(rec.name or "NPC")
+    net.WriteString(text or "")
+    net.WriteBool(isError == true)
+    if IsValid(rec.owner) then
+        net.Send(rec.owner)
+    else
+        net.Broadcast()
+    end
+end
+
+local function playTTS(rec, text)
+    if not rec.enableTTS then return end
+    if not IsValid(rec.ent) then return end
+    net.Start("AINPC_TTSPlay")
+    net.WriteEntity(rec.ent)
+    net.WriteString(rec.ttsVoice or "streamelements")
+    net.WriteString(AINPCS.Truncate(text or "", 800))
+    net.Broadcast()
+end
+
+local function extractReply(response)
+    if not istable(response) then return nil end
+    local choices = response.choices
+    if istable(choices) and choices[1] and istable(choices[1].message) then
+        return choices[1].message.content
+    end
+    -- Ollama non-OpenAI-compat fallback
+    if istable(response.message) and response.message.content then
+        return response.message.content
+    end
+    return nil
+end
+
+local function extractError(response)
+    if not istable(response) then return nil end
+    local err = response.error
+    if isstring(err) then return err end
+    if istable(err) then
+        if isstring(err.message) then return err.message end
+        if err.message ~= nil then return tostring(err.message) end
+        if err.code ~= nil then return tostring(err.code) end
+        return "provider returned error"
+    end
+    return nil
+end
+
+local function sendMessageToNPC(rec, role, text)
+    if not IsValid(rec.ent) then return end
+    local provider = providers.get(rec.provider)
+    if not provider then
+        sendChatReply(rec, "Provider '" .. tostring(rec.provider) .. "' is not available.", true)
+        return
+    end
+
+    table.insert(rec.history, { role = role, content = text })
+    rec.history = AINPCS.TrimHistory(rec.history, AINPCS.Defaults.MaxHistoryTurns)
+
+    setThinking(rec, true)
+
+    provider.request(rec, function(err, response)
+        setThinking(rec, false)
+
+        if err then
+            AINPCS.DebugPrint("[AI-NPCs] " .. rec.provider .. " error: " .. err)
+            sendChatReply(rec, "(" .. rec.name .. " can't respond right now: " .. err .. ")", true)
+            return
+        end
+
+        local content = extractReply(response)
+        if not content then
+            local errMsg = extractError(response) or "no choices returned"
+            AINPCS.DebugPrint("[AI-NPCs] bad response from " .. rec.provider .. ": " .. errMsg)
+            sendChatReply(rec, "(" .. rec.name .. " seems confused: " .. errMsg .. ")", true)
+            return
+        end
+
+        content = AINPCS.Trim(content)
+        table.insert(rec.history, { role = "assistant", content = content })
+        sendChatReply(rec, content, false)
+        playTTS(rec, content)
+    end)
+end
+
+-- Find the nearest AI NPC within range that belongs (preferentially) to the player.
+local function findNearestNPCForPlayer(ply, range)
+    range = range or CV_PROXIMITY_R:GetFloat()
+    local rangeSq = range * range
+    local eye = ply:EyePos()
+    local bestOwned, bestOwnedDist, bestAny, bestAnyDist = nil, math.huge, nil, math.huge
+    local key = plyKey(ply)
+
+    for _, rec in pairs(NPCs) do
+        if IsValid(rec.ent) then
+            local d = rec.ent:GetPos():DistToSqr(eye)
+            if d <= rangeSq then
+                if rec.ownerKey == key and d < bestOwnedDist then
+                    bestOwned, bestOwnedDist = rec, d
+                elseif d < bestAnyDist then
+                    bestAny, bestAnyDist = rec, d
+                end
+            end
+        end
+    end
+
+    return bestOwned or bestAny
+end
+
+-- =============================================================================
+-- Net receivers
+-- =============================================================================
+
+net.Receive("AINPC_SpawnRequest", function(len, ply)
+    if not IsValid(ply) then return end
+    local ok, data = pcall(net.ReadTable)
+    if not ok or not istable(data) then
+        sendToast(ply, "Malformed spawn request.", "error")
+        return
+    end
+    spawnAINPC(ply, data)
+end)
+
+net.Receive("AINPC_ModelPreview", function(len, ply)
+    if not IsValid(ply) then return end
+    local class = net.ReadString()
+    local data = lookupNPCData(class)
+    local model = (data and data.Model) or ""
+
+    if model == "" and data and data.Class then
+        local temp = ents.Create(data.Class)
+        if IsValid(temp) then
+            temp:Spawn()
+            model = temp:GetModel() or ""
+            temp:Remove()
+        end
+    end
+
+    net.Start("AINPC_ModelPreviewResponse")
     net.WriteString(model)
     net.Send(ply)
 end)
 
-net.Receive("SendNPCInfo", function(len, ply)
-    local data = net.ReadTable()
-    AINPCS.DebugPrint("Data received: " .. util.TableToJSON(data))
+net.Receive("AINPC_ChatRequest", function(len, ply)
+    if not IsValid(ply) then return end
 
-    local apiKey = data["apiKey"]
-    local providerId = data["provider"]
-    -- Please dont steal our API key, we are poor
-    -- TODO Add Encrpytion Decrpytion crap to obfuscate api key
-    if apiKey == "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" then
-        AINPCS.DebugPrint("Free API key received")
+    local targetEnt = net.ReadEntity()
+    local msg       = AINPCS.Trim(net.ReadString() or "")
+
+    if msg == "" then return end
+    if #msg > 500 then msg = string.sub(msg, 1, 500) end
+
+    local now = CurTime()
+    local key = plyKey(ply)
+    if (NextChat[key] or 0) > now then
+        sendToast(ply, "Slow down — try again in a moment.", "error")
+        return
+    end
+    NextChat[key] = now + CV_CHAT_COOLDOWN:GetFloat()
+
+    local rec
+    if IsValid(targetEnt) and NPCs[targetEnt:EntIndex()] then
+        rec = NPCs[targetEnt:EntIndex()]
     else
-        AINPCS.DebugPrint("API key received: " .. apiKey)
+        rec = findNearestNPCForPlayer(ply, CV_INTERACT_R:GetFloat() * 2)
     end
 
-    if apiKey == "" and providerId ~= "ollama" then
-        ply:ChatPrint("Invalid API key.")
-        return nil
-    end
-
-    -- Ensure NPCData is provided
-    local npcData = data["NPCData"] or data["npcData"]
-    if not npcData then
-        ply:ChatPrint("Error: NPC data missing. Cannot spawn NPC.")
+    if not rec then
+        sendToast(ply, "No AI NPC nearby. Spawn one from the C menu → AI NPCs.", "error")
         return
     end
 
-    -- Fallback to set default class if not present
-    if not npcData.Class then
-        npcData.Class = "npc_citizen"
-        AINPCS.DebugPrint("Warning: npcData.Class was nil, defaulted to 'npc_citizen'")
-    end
-
-    -- Generate a unique key for the NPC
-    table.insert(spawnedNPC, {})
-    local key = #spawnedNPC
-
-    spawnedNPC[key]["history"] = {}
-
-    spawnedNPC[key]["provider"] = data["provider"]
-    spawnedNPC[key]["hostname"] = data["hostname"]
-    spawnedNPC[key]["apiKey"] = apiKey
-    local maxTokens = tonumber(data["max_tokens"])
-    spawnedNPC[key]["max_tokens"] = maxTokens or 2048
-    local temperature = tonumber(data["temperature"])
-    spawnedNPC[key]["temperature"] = temperature
-    spawnedNPC[key]["reasoning"] = data["reasoning"]
-    spawnedNPC[key]["enableTTS"] = data["enableTTS"]
-    spawnedNPC[key]["model"] = data["model"]
-
-    local personality = data["personality"]
-    AINPCS.DebugPrint("Personality received: " .. personality)
-    spawnedNPC[key]["personality"] = "it is your job to act like this personality: " ..
-                                     personality ..
-                                     "if you understand, respond with a hello in character" -- Set the personality in the Global table
-
-    -- Calculate spawn position in front of the player
-    local spawnPosition = ply:GetEyeTrace().HitPos
-
-    -- Generate a random angle for the NPC
-    local spawnAngle = Angle(0, math.random(0, 360), 0)
-
-    -- Spawn the selected NPC with the random angle
-    spawnedNPC[key]["npc"] = SpawnNPC(spawnPosition, spawnAngle, data["NPCData"], key)
-
-    if spawnedNPC[key] and IsValid(spawnedNPC[key]["npc"]) then
-        AINPCS.DebugPrint("NPC spawned successfully!")
-
-        -- Enable navigation for the NPC
-        spawnedNPC[key]["npc"]:SetNPCState(NPC_STATE_SCRIPT)
-        spawnedNPC[key]["npc"]:SetSchedule(SCHED_IDLE_STAND)
-
-        -- Walk to the player
-        spawnedNPC[key]["npc"]:SetLastPosition(ply:GetPos())
-        spawnedNPC[key]["npc"]:SetSchedule(SCHED_FORCED_GO_RUN)
-
-        ply:sendGPTRequest(key, 'system', spawnedNPC[key]["personality"])
-    else
-        table.remove(spawnedNPC, key)
-        AINPCS.DebugPrint("Failed to spawn NPC.")
-    end
+    sendMessageToNPC(rec, "user", "[" .. ply:Nick() .. "]: " .. msg)
 end)
 
--- Define SpawnNPC function
-function SpawnNPC(pos, ang, npcData, key)
-    local npc = ents.Create(npcData.Class)
-    if not IsValid(npc) then return end
+-- =============================================================================
+-- Chat command + proximity auto-route
+-- =============================================================================
 
-    npc:SetPos(pos)
-    npc:SetAngles(ang)
-    npc:Spawn()
-    if npcData.Model then npc:SetModel(npcData.Model) end
-
-    -- Set up a hook for the NPC's death event
-    hook.Add("OnNPCKilled", "OnAIDeath_" .. key, function(deadNPC, attacker, inflictor)
-        if IsValid(deadNPC) and spawnedNPC[key] and deadNPC == spawnedNPC[key].npc then
-            AINPCS.DebugPrint("AI NPC died or was despawned")
-            spawnedNPC[key] = nil -- Remove NPC from list
-            hook.Remove("OnNPCKilled", "OnAIDeath_" .. key) -- Remove the hook after processing
+local function stripCommand(text)
+    for _, prefix in ipairs({ "/say ", "/ainpc ", "!say ", "!ainpc ", "!ai " }) do
+        if string.sub(text, 1, #prefix):lower() == prefix then
+            return AINPCS.Trim(string.sub(text, #prefix + 1)), true
         end
-    end)
-
-    -- Set up a hook for the NPC's despawn event
-    hook.Add("EntityRemoved", "OnAIDespawn_" .. key, function(removedEnt)
-        if IsValid(removedEnt) and spawnedNPC[key] and removedEnt == spawnedNPC[key].npc then
-            AINPCS.DebugPrint("AI NPC was despawned.")
-            spawnedNPC[key] = nil -- Remove NPC from list
-            hook.Remove("EntityRemoved", "OnAIDespawn_" .. key) -- Remove the hook after processing
+    end
+    for _, bare in ipairs({ "/say", "/ainpc", "!say", "!ainpc", "!ai" }) do
+        if text:lower() == bare then
+            return "", true
         end
-    end)
-    return npc
+    end
+    return text, false
 end
 
--- Find the metatable for the Player type
-local meta = FindMetaTable("Player")
+hook.Add("PlayerSay", "AINPC_ChatHandler", function(ply, text)
+    if not CV_ENABLED:GetBool() then return end
 
--- Extend the Player metatable to add a custom function for sending requests to GPT-3
-meta.sendGPTRequest = function(this, key, author, text)
-    table.insert(spawnedNPC[key]["history"], {
-        role = author,
-        content = text
-    })
+    local msg, isCommand = stripCommand(text)
+    local anyNPCs = next(NPCs) ~= nil
 
-    local provider = providers.get(spawnedNPC[key]["provider"])
-
-    provider.request(spawnedNPC[key], function(err, response)
-        if err then
-            ErrorNoHalt("Error: " .. err)
-        else
-            -- Check if the response contains valid data
-            if response and response.choices and response.choices[1] and
-            response.choices[1].message and
-            response.choices[1].message.content then
-                -- Extract the GPT-3 response content
-                local gptResponse = response.choices[1].message.content
-
-                table.insert(spawnedNPC[key]["history"], {
-                    role = "assistant",
-                    content = gptResponse
-                })
-
-                -- Print the GPT-3 response to the player's voice chat through tts
-                if spawnedNPC[key]["enableTTS"] then
-                    net.Start("SayTTS")
-                    net.WriteString(key)
-                    net.WriteString(gptResponse)
-                    net.WriteEntity(spawnedNPC[key]["npc"])
-                    net.Broadcast()
-                else
-                    local text = "[AI]: " .. gptResponse
-
-                    local chunks = {}
-                    local chunkSize = 200
-
-                    for i = 1, #text, chunkSize do
-                        local startIndex = i
-                        local endIndex = math.min(i + chunkSize - 1, #text) 
-                        table.insert(chunks, text:sub(startIndex, endIndex))
-                    end
-
-                    for _, chunk in ipairs(chunks) do
-                    this:ChatPrint(chunk)
-                    end
-                end
-            else
-                -- Print an error message if the response is invalid or contains an error
-                this:ChatPrint((response and response.error and
-                                response.error.message) and "Error! " ..
-                                response.error.message or
-                                "Unknown error! api key is: " .. spawnedNPC[key]["apiKey"] ..
-                                '')
-            end
+    if isCommand then
+        if not anyNPCs then
+            sendToast(ply, "No AI NPC spawned. Press C → AI NPCs to create one.", "error")
+            return ""
         end
-    end)
-end
-
-hook.Add("PlayerSay", "PlayerChatHandler", function(ply, text, team)
-    local cmd = string.sub(text, 1, 4)
-    local txt = string.sub(text, 5)
-    if cmd == "/say" then
-        ply:ChatPrint("One moment, please...")
-        for key, _ in pairs(spawnedNPC) do
-            ply:sendGPTRequest(key, 'user', txt) -- Send the player's message to GPT-3
+        if msg == "" then
+            sendToast(ply, "Usage: /say <message>", "info")
+            return ""
         end
+
+        local rec = findNearestNPCForPlayer(ply, 99999)
+        if not rec then
+            sendToast(ply, "No AI NPC nearby.", "error")
+            return ""
+        end
+        sendMessageToNPC(rec, "user", "[" .. ply:Nick() .. "]: " .. msg)
         return ""
     end
-end)
 
-hook.Add("Think", "FollowNPCSound", function()
-    for k, v in pairs(spawnedNPC) do
-        if v["enableTTS"] then
-            net.Start("TTSPositionUpdate")
-            net.WriteString(k)
-            net.WriteVector(v.npc:GetPos())
-            net.Broadcast()
+    -- Proximity auto-route: regular chat within range talks to nearest NPC
+    -- and is ALSO shown in world chat (we don't swallow it).
+    if CV_PROXIMITY:GetBool() and anyNPCs then
+        local rec = findNearestNPCForPlayer(ply, CV_PROXIMITY_R:GetFloat())
+        if rec then
+            sendMessageToNPC(rec, "user", "[" .. ply:Nick() .. "]: " .. text)
         end
     end
 end)
 
--- Reset isAISpawned flag on cleanup
-hook.Add("OnCleanup", "ResetAISpawnedFlag",
-         function() spawnedNPC = {} end)
--- Reset isAISpawned flag on admin cleanup
-hook.Add("AdminCleanup", "ResetAISpawnedFlagAdmin",
-         function() spawnedNPC = {} end)
+-- =============================================================================
+-- E-to-talk: detect use-key on an AI NPC and open the chat UI client-side.
+-- KeyPress can fire repeatedly as the engine sees the key held, so we
+-- debounce per player.
+-- =============================================================================
 
--- Function to encode the API key
-function encode_key(api_key)
-    local encoded_key = ""
-    for i = 1, #api_key do
-        encoded_key = encoded_key .. string.char(string.byte(api_key, i) + 1)
-    end
-    return encoded_key
-end
+hook.Add("KeyPress", "AINPC_UseToTalk", function(ply, button)
+    if button ~= IN_USE then return end
+    if not IsValid(ply) then return end
 
--- Function to decode the API key
-function decode_key(encoded_key)
-    local decoded_key = ""
-    for i = 1, #encoded_key do
-        decoded_key = decoded_key ..
-                          string.char(string.byte(encoded_key, i) - 1)
+    local k = plyKey(ply)
+    local now = CurTime()
+    if (NextUse[k] or 0) > now then return end
+    NextUse[k] = now + 0.5
+
+    local tr = ply:GetEyeTrace()
+    local ent = tr.Entity
+    if not IsValid(ent) then return end
+    if not ent:GetNWBool("IsAINPC", false) then return end
+    if ply:EyePos():Distance(ent:GetPos()) > CV_INTERACT_R:GetFloat() then return end
+
+    net.Start("AINPC_OpenChatUI")
+    net.WriteEntity(ent)
+    net.Send(ply)
+end)
+
+-- =============================================================================
+-- Housekeeping
+-- =============================================================================
+
+hook.Add("EntityRemoved", "AINPC_EntRemoved", function(ent)
+    if not IsValid(ent) then return end
+    local idx = ent:EntIndex()
+    if NPCs[idx] then cleanupNPC(idx) end
+end)
+
+hook.Add("PlayerDisconnected", "AINPC_PlayerLeft", function(ply)
+    local key = plyKey(ply)
+    NextSpawn[key] = nil
+    NextChat[key] = nil
+    NextUse[key] = nil
+    for _, rec in pairs(NPCs) do
+        if rec.ownerKey == key and IsValid(rec.ent) then
+            rec.ent:Remove()
+        end
     end
-    return decoded_key
-end
+end)
+
+hook.Add("OnCleanup", "AINPC_Cleanup", function(name)
+    if name ~= "npcs" then return end
+    cleanupAll()
+end)
+
+hook.Add("PostCleanupMap", "AINPC_MapCleanup", cleanupAll)
+
+AINPCS.DebugPrint("[AI-NPCs] server loaded, version " .. AINPCS.Version)

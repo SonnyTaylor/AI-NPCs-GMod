@@ -1,61 +1,62 @@
-local ollamaProvider = {}
+--[[
+    Ollama provider (self-hosted). Uses the OpenAI-compatible
+    /v1/chat/completions endpoint so max_tokens/temperature work natively
+    and the response shape matches every other provider.
+]]
 
-ollamaProvider.models = {}
+local provider = {}
+
+provider.id       = "ollama"
+provider.label    = "Ollama (self-hosted)"
+provider.getKeyUrl = "https://ollama.com/download"
+provider.note     = "Runs locally. Set Hostname to your Ollama host (e.g. 127.0.0.1:11434). API key is optional."
+
+provider.requiresHostname = true
+provider.allowCustomModel = true
+
+-- No default model list — users type the model they've pulled locally.
+provider.models     = {}
+provider.modelOrder = {}
 
 if SERVER then
-    function ollamaProvider.request(npc, callback)
-        if not npc["hostname"] then
-            ErrorNoHalt("Hostname not defined")
+    function provider.request(npc, callback)
+        local host = AINPCS.NormaliseHostname(npc.hostname or "", "http")
+        if host == "" then
+            return callback("Ollama hostname not set. Open the AI NPCs panel and fill in Hostname.", nil)
         end
 
-        local requestBody = {
-            model = npc["model"],
-            messages = npc["history"],
-            max_tokens = npc["max_tokens"], 
-            temperature = npc["temperature"],
-            stream = false
+        local body = {
+            model    = npc.model,
+            messages = npc.history,
+            stream   = false,
         }
+        if npc.max_tokens then body.max_tokens = npc.max_tokens end
+        if npc.temperature ~= nil then body.temperature = npc.temperature end
 
-        local headers = {
-            ["Content-Type"] = "application/json"
-        }
-
-        if npc["apiKey"] and npc["apiKey"] ~= "" then
-            headers["Authorization"] = "Bearer " .. npc["apiKey"]
+        local headers = { ["Content-Type"] = "application/json" }
+        if not AINPCS.IsBlank(npc.apiKey) then
+            headers["Authorization"] = "Bearer " .. npc.apiKey
         end
 
         HTTP({
-            url = "http://" .. npc["hostname"] .. "/api/chat",
-            type = "application/json",
+            url = host .. "/v1/chat/completions",
             method = "post",
+            type = "application/json",
             headers = headers,
-            body = util.TableToJSON(requestBody),
-
-            success = function(code, body, headers)
-                local loggedBody = body or "<empty response>"
-                AINPCS.DebugPrint("[AI-NPCs][Ollama] Response code: " .. tostring(code))
-                AINPCS.DebugPrint("[AI-NPCs][Ollama] Response body: " .. loggedBody)
-                -- Parse the JSON response from the GPT-3 API
-                local response = util.JSONToTable(body)
-
-                -- Add choices list to match ollama output to GPT output
-                response.choices = {
-                    {
-                        message = {
-                            role = response.message.role,
-                            content = response.message.content
-                        }
-                    }
-                }
-
-                callback(nil, response)
+            body = util.TableToJSON(body),
+            success = function(code, respBody)
+                AINPCS.DebugPrint("[AI-NPCs][Ollama] " .. tostring(code))
+                local parsed = AINPCS.SafeJSON(respBody)
+                if not parsed then
+                    return callback("Invalid JSON from Ollama (HTTP " .. tostring(code) .. "). Is the host URL correct?", nil)
+                end
+                callback(nil, parsed)
             end,
             failed = function(err)
-                -- Print an error message if the HTTP request fails
-                callback("HTTP Error: " .. err, nil)
-            end
+                callback("HTTP error: " .. tostring(err) .. " (is Ollama running at " .. host .. "?)", nil)
+            end,
         })
     end
 end
 
-return ollamaProvider
+return provider

@@ -1,109 +1,92 @@
-local openAiProvider = {}
+local provider = {}
 
-openAiProvider.modelOrder = {
+provider.id       = "openai"
+provider.label    = "OpenAI"
+provider.getKeyUrl = "https://platform.openai.com/api-keys"
+provider.note     = "Paid. Blocked in some regions (Russia, China, etc)."
+
+provider.modelOrder = {
     "gpt-5",
     "gpt-5-mini",
     "gpt-5-nano",
     "gpt-5-pro",
+    "gpt-4.1",
+    "gpt-4.1-mini",
     "gpt-4o",
     "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-4",
-    "gpt-3.5-turbo"
+    "o4-mini",
 }
 
-openAiProvider.models = {
-    ["gpt-5"] = {
-        label = "GPT-5",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
+local gpt5Settings = {
+    max_tokens  = { min = 128, max = 8192, default = 2048 },
+    temperature = { min = 1, max = 1, default = 1 },
+    reasoning   = { "minimal", "low", "medium", "high" },
+    tool_support = true,
+}
+
+local gpt4Settings = {
+    max_tokens  = { min = 128, max = 4096, default = 2048 },
+    temperature = { min = 0, max = 2, default = 1 },
+    tool_support = true,
+}
+
+provider.models = {
+    ["gpt-5"]       = table.Copy(gpt5Settings), ["gpt-5-mini"] = table.Copy(gpt5Settings),
+    ["gpt-5-nano"]  = table.Copy(gpt5Settings), ["gpt-5-pro"]  = table.Copy(gpt5Settings),
+    ["gpt-4.1"]     = table.Copy(gpt4Settings), ["gpt-4.1-mini"] = table.Copy(gpt4Settings),
+    ["gpt-4o"]      = table.Copy(gpt4Settings), ["gpt-4o-mini"]  = table.Copy(gpt4Settings),
+    ["o4-mini"] = {
+        max_tokens  = { min = 128, max = 8192, default = 2048 },
         temperature = { min = 1, max = 1, default = 1 },
-        reasoning = { "minimal", "low", "medium", "high" },
-    },
-    ["gpt-5-mini"] = {
-        label = "GPT-5 Mini",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 1, max = 1, default = 1 },
-        reasoning = { "minimal", "low", "medium", "high" },
-    },
-    ["gpt-5-nano"] = {
-        label = "GPT-5 Nano",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 1, max = 1, default = 1 },
-        reasoning = { "minimal", "low", "medium", "high" },
-    },
-    ["gpt-5-pro"] = {
-        label = "GPT-5 Pro",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 1, max = 1, default = 1 },
-        reasoning = { "minimal", "low", "medium", "high" },
-    },
-    ["gpt-4o"] = {
-        label = "GPT-4o",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 0, max = 2, default = 1 },
-    },
-    ["gpt-4o-mini"] = {
-        label = "GPT-4o Mini",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 0, max = 2, default = 1 },
-    },
-    ["gpt-4-turbo"] = {
-        label = "GPT-4 Turbo",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 0, max = 2, default = 1 },
-    },
-    ["gpt-4"] = {
-        label = "GPT-4",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 0, max = 2, default = 1 },
-    },
-    ["gpt-3.5-turbo"] = {
-        label = "GPT-3.5 Turbo",
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 0, max = 2, default = 1 },
+        reasoning   = { "minimal", "low", "medium", "high" },
+        tool_support = true,
     },
 }
+provider.models["gpt-5"].label       = "GPT-5"
+provider.models["gpt-5-mini"].label  = "GPT-5 Mini"
+provider.models["gpt-5-nano"].label  = "GPT-5 Nano"
+provider.models["gpt-5-pro"].label   = "GPT-5 Pro"
+provider.models["gpt-4.1"].label     = "GPT-4.1"
+provider.models["gpt-4.1-mini"].label = "GPT-4.1 Mini"
+provider.models["gpt-4o"].label      = "GPT-4o"
+provider.models["gpt-4o-mini"].label = "GPT-4o Mini"
+provider.models["o4-mini"].label     = "o4-mini (reasoning)"
 
 if SERVER then
-    function openAiProvider.request(npc, callback)
-        local requestBody = {
-            model = npc["model"],
-            messages = npc["history"],
-            max_completion_tokens = npc["max_tokens"], 
+    function provider.request(npc, callback)
+        local body = {
+            model = npc.model,
+            messages = npc.history,
+            max_completion_tokens = npc.max_tokens,
         }
-
-        if npc["reasoning"] ~= nil and npc["reasoning"] ~= "" then
-            requestBody.reasoning_effort = npc["reasoning"]
+        if npc.reasoning and npc.reasoning ~= "" then
+            body.reasoning_effort = npc.reasoning
         end
-
-        if npc["temperature"] ~= nil then
-            requestBody.temperature = npc["temperature"]
+        if npc.temperature ~= nil then
+            body.temperature = npc.temperature
         end
 
         HTTP({
             url = "https://api.openai.com/v1/chat/completions",
-            type = "application/json; charset=utf-8",
             method = "post",
+            type = "application/json; charset=utf-8",
             headers = {
-                ["Authorization"] = "Bearer " .. npc["apiKey"] -- Access the API key from the Global table
+                ["Authorization"] = "Bearer " .. (npc.apiKey or ""),
             },
-            body = util.TableToJSON(requestBody), -- tableToJSON changes integers to float
-
-            success = function(code, body, headers)
-                local loggedBody = body or "<empty response>"
-                AINPCS.DebugPrint("[AI-NPCs][OpenAI] Response code: " .. tostring(code))
-                AINPCS.DebugPrint("[AI-NPCs][OpenAI] Response body: " .. loggedBody)
-                -- Parse the JSON response from the GPT-3 API
-                local response = util.JSONToTable(body)
-
-                callback(nil, response)
+            body = util.TableToJSON(body),
+            success = function(code, respBody)
+                AINPCS.DebugPrint("[AI-NPCs][OpenAI] " .. tostring(code))
+                local parsed = AINPCS.SafeJSON(respBody)
+                if not parsed then
+                    return callback("Invalid JSON from OpenAI (HTTP " .. tostring(code) .. ")", nil)
+                end
+                callback(nil, parsed)
             end,
             failed = function(err)
-                -- Print an error message if the HTTP request fails
-                callback("HTTP Error: " .. err, nil)
-            end
+                callback("HTTP error: " .. tostring(err), nil)
+            end,
         })
     end
 end
 
-return openAiProvider
+return provider

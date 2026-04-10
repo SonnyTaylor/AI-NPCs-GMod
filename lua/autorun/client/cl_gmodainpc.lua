@@ -1,582 +1,683 @@
-include("autorun/sh_ainpcs_debug.lua")
+--[[
+    AI NPCs — client config UI
+    The panel opened from C menu → AI NPCs. Lets the user pick a provider,
+    model, NPC class, enter an API key, and spawn.
+]]
 
-local providers = include('providers/providers.lua')
+local providers = include("providers/providers.lua")
 
--- Context menu button
-local inputapikey = ""
-list.Set("DesktopWindows", "ai_menu", {
+-- =============================================================================
+-- Persisted settings (stored client-side so the user doesn't re-enter keys).
+-- =============================================================================
+
+local SETTINGS_FILE = "ai_npcs_settings.json"
+
+local defaultSettings = {
+    provider    = "groq",
+    apiKeys     = {},     -- [providerId] = key
+    hostname    = "127.0.0.1:11434",
+    personality = "",
+    npcClass    = "npc_citizen",
+    model       = "",
+    enableTTS   = false,
+    ttsVoice    = "streamelements",
+    max_tokens  = 2048,
+    temperature = 1,
+    reasoning   = nil,
+    name        = "",
+    firstRun    = true,
+}
+
+local function loadSettings()
+    if not file.Exists(SETTINGS_FILE, "DATA") then
+        return table.Copy(defaultSettings)
+    end
+    local raw = file.Read(SETTINGS_FILE, "DATA") or ""
+    local parsed = util.JSONToTable(raw)
+    if not istable(parsed) then return table.Copy(defaultSettings) end
+    for k, v in pairs(defaultSettings) do
+        if parsed[k] == nil then parsed[k] = v end
+    end
+    if not istable(parsed.apiKeys) then parsed.apiKeys = {} end
+    return parsed
+end
+
+local function saveSettings(s)
+    file.Write(SETTINGS_FILE, util.TableToJSON(s))
+end
+
+local Settings = loadSettings()
+
+-- =============================================================================
+-- OpenRouter live model cache (populated by net message from server)
+-- =============================================================================
+
+local LiveOpenRouterModels = nil  -- { order = {...}, models = {...} }
+local OpenRouterBuffer = { chunks = {}, expect = 0 }
+
+net.Receive("AINPC_OpenRouterModels", function()
+    local idx   = net.ReadUInt(8)
+    local total = net.ReadUInt(8)
+    local sz    = net.ReadUInt(20)
+    local slice = net.ReadData(sz)
+
+    if idx == 1 then
+        OpenRouterBuffer.chunks = {}
+        OpenRouterBuffer.expect = total
+    end
+    OpenRouterBuffer.chunks[idx] = slice
+
+    if idx ~= total then return end
+
+    local payload = table.concat(OpenRouterBuffer.chunks)
+    OpenRouterBuffer = { chunks = {}, expect = 0 }
+
+    local parsed = util.JSONToTable(payload or "")
+    if istable(parsed) and istable(parsed.order) and istable(parsed.models) then
+        LiveOpenRouterModels = parsed
+        AINPCS.DebugPrint("[AI-NPCs] received " .. #parsed.order .. " live OpenRouter models")
+        if AINPCS.Panel and IsValid(AINPCS.Panel) then
+            AINPCS.Panel:ReloadProviderModels()
+        end
+    end
+end)
+
+-- =============================================================================
+-- Fonts
+-- =============================================================================
+
+surface.CreateFont("AINPC_Header", { font = "Roboto", size = 22, weight = 700 })
+surface.CreateFont("AINPC_Body",   { font = "Roboto", size = 16, weight = 400 })
+surface.CreateFont("AINPC_Small",  { font = "Roboto", size = 13, weight = 400 })
+
+-- =============================================================================
+-- Desktop window entry
+-- =============================================================================
+
+list.Set("DesktopWindows", "ai_npcs_menu", {
     title = "AI NPCs",
-    icon = "materials/gptlogo/ChatGPT_logo.svg.png",
-    init = function(icon, window) drawaihud() end
+    icon  = "materials/gptlogo/ChatGPT_logo.svg.png",
+    init  = function() AINPCS.OpenConfigPanel() end,
 })
 
-local modelPanel
-function drawaihud()
-    local frame = vgui.Create("DFrame") -- Create a frame for the character selection panel
-    frame:SetSize(960, 580) -- Expand the frame for the new column layout
-    frame:SetTitle("Character Selection") -- Set the title of the frame
-    frame:Center() -- Center the frame on the screen
-    frame:MakePopup() -- Make the frame a popup
-    frame:SetDraggable(true) -- Make the frame draggable
-    frame:SetBackgroundBlur(true) -- Enable background blur 
-    frame:SetScreenLock(true) -- Lock the mouse to the frame
-    frame:SetIcon("materials/gptlogo/ChatGPT_logo.svg.png") -- Set the icon of the frame
+concommand.Add("ainpc_open", function() AINPCS.OpenConfigPanel() end)
 
-    local labelColor = Color(255, 255, 255)
+-- =============================================================================
+-- Helpers
+-- =============================================================================
 
-    local contentPanel = vgui.Create("DPanel", frame)
-    contentPanel:Dock(FILL)
-    contentPanel:DockPadding(10, 10, 10, 10)
-    contentPanel.Paint = nil
+local labelColor = Color(235, 235, 235)
+local subColor   = Color(170, 170, 170)
+local accent     = Color(90, 165, 255)
+local errColor   = Color(235, 80, 80)
+local okColor    = Color(90, 200, 120)
 
-    local modelColumn = vgui.Create("DPanel", contentPanel)
-    modelColumn:Dock(LEFT)
-    modelColumn:SetWide(220)
-    modelColumn:DockMargin(0, 0, 10, 0)
-    modelColumn:DockPadding(10, 10, 10, 10)
-    modelColumn.Paint = nil
+local function Section(parent, title)
+    local p = vgui.Create("DPanel", parent)
+    p:Dock(TOP)
+    p:DockMargin(0, 0, 0, 10)
+    p:DockPadding(12, 10, 12, 12)
+    p.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(40, 40, 44))
+    end
 
-    local modelHeader = vgui.Create("DLabel", modelColumn)
-    modelHeader:SetText("3D model view")
-    modelHeader:SetFont("Trebuchet24")
-    modelHeader:SetContentAlignment(4)
-    modelHeader:Dock(TOP)
-    modelHeader:SetTall(24)
-    modelHeader:DockMargin(0, 0, 0, 8)
+    if title then
+        local lbl = vgui.Create("DLabel", p)
+        lbl:SetFont("AINPC_Header")
+        lbl:SetText(title)
+        lbl:SetTextColor(labelColor)
+        lbl:Dock(TOP)
+        lbl:SetTall(26)
+        lbl:DockMargin(0, 0, 0, 6)
+    end
+
+    return p
+end
+
+local function LabeledEntry(parent, label, placeholder)
+    local lbl = vgui.Create("DLabel", parent)
+    lbl:SetText(label)
+    lbl:SetFont("AINPC_Body")
+    lbl:SetTextColor(labelColor)
+    lbl:Dock(TOP)
+    lbl:SetTall(18)
+
+    local entry = vgui.Create("DTextEntry", parent)
+    entry:Dock(TOP)
+    entry:SetTall(26)
+    entry:DockMargin(0, 2, 0, 8)
+    if placeholder then entry:SetPlaceholderText(placeholder) end
+    return entry
+end
+
+local function getModelMap(providerId)
+    if providerId == "openrouter" and LiveOpenRouterModels then
+        return LiveOpenRouterModels.order, LiveOpenRouterModels.models
+    end
+    local p = providers.get(providerId)
+    if not p then return {}, {} end
+    return p.modelOrder or {}, p.models or {}
+end
+
+-- =============================================================================
+-- Onboarding modal
+-- =============================================================================
+
+local function ShowOnboarding()
+    local f = vgui.Create("DFrame")
+    f:SetSize(520, 360)
+    f:Center()
+    f:SetTitle("AI NPCs — Welcome")
+    f:MakePopup()
+    f:SetBackgroundBlur(true)
+
+    local body = vgui.Create("DPanel", f)
+    body:Dock(FILL)
+    body:DockPadding(20, 16, 20, 16)
+    body.Paint = nil
+
+    local header = vgui.Create("DLabel", body)
+    header:SetFont("AINPC_Header")
+    header:SetText("You need a free API key to use AI NPCs")
+    header:SetTextColor(labelColor)
+    header:Dock(TOP)
+    header:SetTall(30)
+
+    local para = vgui.Create("DLabel", body)
+    para:SetFont("AINPC_Body")
+    para:SetTextColor(subColor)
+    para:SetWrap(true)
+    para:SetAutoStretchVertical(true)
+    para:Dock(TOP)
+    para:DockMargin(0, 6, 0, 12)
+    para:SetText(
+        "This addon talks to real AI services, which all need an API key. Good news: two providers have genuinely free tiers that work for casual play.\n\n" ..
+        "• Groq — easiest. Sign up with Google, no credit card ever. Daily rate limit is generous.\n" ..
+        "• OpenRouter — more models including free reasoning models. Lower daily cap on the $0 tier.\n\n" ..
+        "Click a button below to open the signup page. Paste your key into the AI NPCs panel."
+    )
+
+    local buttons = vgui.Create("DPanel", body)
+    buttons:Dock(TOP)
+    buttons:SetTall(40)
+    buttons.Paint = nil
+
+    local groqBtn = vgui.Create("DButton", buttons)
+    groqBtn:Dock(LEFT)
+    groqBtn:SetWide(220)
+    groqBtn:DockMargin(0, 0, 10, 0)
+    groqBtn:SetText("Get free Groq key")
+    groqBtn.DoClick = function() gui.OpenURL("https://console.groq.com/keys") end
+
+    local orBtn = vgui.Create("DButton", buttons)
+    orBtn:Dock(LEFT)
+    orBtn:SetWide(240)
+    orBtn:SetText("Get free OpenRouter key")
+    orBtn.DoClick = function() gui.OpenURL("https://openrouter.ai/keys") end
+
+    local dismiss = vgui.Create("DButton", body)
+    dismiss:Dock(BOTTOM)
+    dismiss:SetTall(34)
+    dismiss:DockMargin(0, 10, 0, 0)
+    dismiss:SetText("Got it — don't show this again")
+    dismiss.DoClick = function()
+        Settings.firstRun = false
+        saveSettings(Settings)
+        f:Close()
+    end
+end
+
+-- =============================================================================
+-- Config panel
+-- =============================================================================
+
+function AINPCS.OpenConfigPanel()
+    if IsValid(AINPCS.Panel) then
+        AINPCS.Panel:Remove()
+    end
+
+    local frame = vgui.Create("DFrame")
+    frame:SetSize(980, 620)
+    frame:Center()
+    frame:SetTitle("AI NPCs — spawn config  (v" .. AINPCS.Version .. ")")
+    frame:MakePopup()
+    frame:SetDraggable(true)
+    frame:SetBackgroundBlur(true)
+    frame:SetIcon("materials/gptlogo/ChatGPT_logo.svg.png")
+    AINPCS.Panel = frame
+
+    -- ---- Layout ----
+    local content = vgui.Create("DPanel", frame)
+    content:Dock(FILL)
+    content:DockPadding(12, 12, 12, 12)
+    content.Paint = nil
+
+    -- ---- Left column: 3D model preview ----
+    local leftCol = vgui.Create("DPanel", content)
+    leftCol:Dock(LEFT)
+    leftCol:SetWide(240)
+    leftCol:DockMargin(0, 0, 10, 0)
+    leftCol.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 30, 34)) end
+
+    local modelHeader = vgui.Create("DLabel", leftCol)
+    modelHeader:SetFont("AINPC_Header")
+    modelHeader:SetText("Preview")
     modelHeader:SetTextColor(labelColor)
+    modelHeader:Dock(TOP)
+    modelHeader:DockMargin(12, 10, 12, 4)
+    modelHeader:SetTall(24)
 
-    modelPanel = vgui.Create("DModelPanel", modelColumn)
-    modelPanel:Dock(FILL)
-    modelPanel:SetModel("models/humans/group01/male_07.mdl")
-    modelPanel:SetFOV(48)
-    modelPanel.LayoutEntity = function(self, ent)
+    local mp = vgui.Create("DModelPanel", leftCol)
+    mp:Dock(FILL)
+    mp:DockMargin(8, 0, 8, 8)
+    mp:SetModel("models/humans/group01/male_07.mdl")
+    mp:SetFOV(48)
+    mp.LayoutEntity = function(self, ent)
         self:RunAnimation()
-        ent:SetAngles(Angle(0, RealTime() * 100, 0))
+        ent:SetAngles(Angle(0, RealTime() * 80, 0))
     end
 
-    local function createColumn(title, width, marginRight)
-        local container = vgui.Create("DPanel", contentPanel)
-        container:Dock(LEFT)
-        container:SetWide(width)
-        container:DockMargin(0, 0, marginRight or 10, 0)
-        container:DockPadding(10, 10, 10, 10)
-        container.Paint = nil
+    -- ---- Middle column: Provider + NPC ----
+    local middleCol = vgui.Create("DScrollPanel", content)
+    middleCol:Dock(LEFT)
+    middleCol:SetWide(340)
+    middleCol:DockMargin(0, 0, 10, 0)
 
-        local header = vgui.Create("DLabel", container)
-        header:SetText(title)
-        header:SetFont("Trebuchet24")
-        header:SetContentAlignment(4)
-        header:Dock(TOP)
-        header:SetTall(24)
-        header:DockMargin(0, 0, 0, 8)
-        header:SetTextColor(labelColor)
+    -- ---- Right column: Settings ----
+    local rightCol = vgui.Create("DScrollPanel", content)
+    rightCol:Dock(FILL)
 
-        local body = vgui.Create("DScrollPanel", container)
-        body:Dock(FILL)
-        body:SetPaintBackground(false)
+    -- ---- Provider section ----
+    local providerSection = Section(middleCol, "Provider")
 
-        return body
-    end
-
-    local personalityBody = createColumn("AI Personality", 220)
-    local providerBody = createColumn("Model selector", 220)
-    local settingsBody = createColumn("Model settings", 240, 0)
-
-    local currentProviderId = "openai"
-    local currentProviderData = nil
-    local currentModelChoice = nil
-    local currentReasoningChoice = nil
-
-    local defaultLimits = {
-        max_tokens = { min = 128, max = 4096, default = 2048 },
-        temperature = { min = 0, max = 2, default = 1 },
-    }
-
-    local providerDropdown
-    local modelDropdown
-    local modelTextEntry
-    local maxTokensSlider
-    local temperatureSlider
-    local reasoningLabel
-    local reasoningDropdown
-
-    -- AI Personality
-    local nameLabel = personalityBody:Add("DLabel")
-    nameLabel:SetText("AI Personality:")
-    nameLabel:SetContentAlignment(4)
-    nameLabel:SetTall(20)
-    nameLabel:Dock(TOP)
-    nameLabel:DockMargin(0, 0, 0, 4)
-    nameLabel:SetTextColor(labelColor)
-
-    local aiLinkEntry = personalityBody:Add("DTextEntry")
-    aiLinkEntry:Dock(TOP)
-    aiLinkEntry:SetTall(48)
-    aiLinkEntry:DockMargin(0, 0, 0, 12)
-
-    -- Provider selection
-    local providerLabel = providerBody:Add("DLabel")
-    providerLabel:SetText("Provider:")
-    providerLabel:SetContentAlignment(4)
-    providerLabel:SetTall(20)
-    providerLabel:Dock(TOP)
-    providerLabel:DockMargin(0, 0, 0, 4)
-    providerLabel:SetTextColor(labelColor)
-
-    providerDropdown = providerBody:Add("DComboBox")
+    local providerDropdown = vgui.Create("DComboBox", providerSection)
     providerDropdown:Dock(TOP)
-    providerDropdown:SetTall(24)
-    providerDropdown:DockMargin(0, 0, 0, 12)
-    providerDropdown:AddChoice("OpenAI", "openai", true)
-    providerDropdown:AddChoice("OpenRouter", "openrouter")
-    providerDropdown:AddChoice("Groq", "groq")
-    providerDropdown:AddChoice("Ollama", "ollama")
+    providerDropdown:SetTall(26)
+    providerDropdown:DockMargin(0, 0, 0, 8)
+    for _, p in ipairs(providers.list()) do
+        providerDropdown:AddChoice(p.label, p.id, p.id == Settings.provider)
+    end
 
-    -- Hostname entry
-    local hostnameLabel = providerBody:Add("DLabel")
-    hostnameLabel:SetText("Hostname:")
-    hostnameLabel:SetContentAlignment(4)
-    hostnameLabel:SetTall(20)
+    local providerNote = vgui.Create("DLabel", providerSection)
+    providerNote:Dock(TOP)
+    providerNote:SetFont("AINPC_Small")
+    providerNote:SetTextColor(subColor)
+    providerNote:SetWrap(true)
+    providerNote:SetAutoStretchVertical(true)
+    providerNote:DockMargin(0, 0, 0, 8)
+    providerNote:SetText("")
+
+    local getKeyBtn = vgui.Create("DButton", providerSection)
+    getKeyBtn:Dock(TOP)
+    getKeyBtn:SetTall(28)
+    getKeyBtn:SetText("Get free key →")
+
+    -- ---- Model section ----
+    local modelSection = Section(middleCol, "Model")
+
+    local hostnameLabel = vgui.Create("DLabel", modelSection)
     hostnameLabel:Dock(TOP)
-    hostnameLabel:DockMargin(0, 0, 0, 4)
+    hostnameLabel:SetTall(18)
+    hostnameLabel:SetText("Hostname:")
+    hostnameLabel:SetFont("AINPC_Body")
     hostnameLabel:SetTextColor(labelColor)
+    hostnameLabel:SetVisible(false)
 
-    local hostnameEntry = providerBody:Add("DTextEntry")
+    local hostnameEntry = vgui.Create("DTextEntry", modelSection)
     hostnameEntry:Dock(TOP)
-    hostnameEntry:SetTall(24)
-    hostnameEntry:DockMargin(0, 0, 0, 12)
+    hostnameEntry:SetTall(26)
+    hostnameEntry:DockMargin(0, 2, 0, 8)
+    hostnameEntry:SetText(Settings.hostname or "")
+    hostnameEntry:SetPlaceholderText("127.0.0.1:11434")
+    hostnameEntry:SetVisible(false)
 
-    -- Model selection or input
-    local modelLabel = providerBody:Add("DLabel")
-    modelLabel:SetText("Model:")
-    modelLabel:SetContentAlignment(4)
-    modelLabel:SetTall(20)
+    local modelLabel = vgui.Create("DLabel", modelSection)
     modelLabel:Dock(TOP)
-    modelLabel:DockMargin(0, 0, 0, 4)
+    modelLabel:SetTall(18)
+    modelLabel:SetText("Model:")
+    modelLabel:SetFont("AINPC_Body")
     modelLabel:SetTextColor(labelColor)
 
-    modelDropdown = providerBody:Add("DComboBox")
+    local modelDropdown = vgui.Create("DComboBox", modelSection)
     modelDropdown:Dock(TOP)
-    modelDropdown:SetTall(24)
-    modelDropdown:DockMargin(0, 0, 0, 8)
+    modelDropdown:SetTall(26)
+    modelDropdown:DockMargin(0, 2, 0, 4)
 
-    modelTextEntry = providerBody:Add("DTextEntry")
-    modelTextEntry:Dock(TOP)
-    modelTextEntry:SetTall(24)
-    modelTextEntry:DockMargin(0, 0, 0, 8)
-    modelTextEntry:SetVisible(false)
+    local modelCustomEntry = vgui.Create("DTextEntry", modelSection)
+    modelCustomEntry:Dock(TOP)
+    modelCustomEntry:SetTall(26)
+    modelCustomEntry:DockMargin(0, 2, 0, 8)
+    modelCustomEntry:SetPlaceholderText("e.g. llama3:8b")
+    modelCustomEntry:SetVisible(false)
 
-    -- NPC selection
-    local npcLabel = providerBody:Add("DLabel")
-    npcLabel:SetText("Select NPC:")
-    npcLabel:SetContentAlignment(4)
-    npcLabel:SetTall(20)
-    npcLabel:Dock(TOP)
-    npcLabel:DockMargin(0, 12, 0, 4)
-    npcLabel:SetTextColor(labelColor)
+    -- ---- NPC section ----
+    local npcSection = Section(middleCol, "NPC")
 
-    local npcDropdown = providerBody:Add("DComboBox")
+    local nameEntry = LabeledEntry(npcSection, "Character name", "e.g. Barney the bartender")
+    nameEntry:SetText(Settings.name or "")
+
+    local npcClassLbl = vgui.Create("DLabel", npcSection)
+    npcClassLbl:Dock(TOP)
+    npcClassLbl:SetTall(18)
+    npcClassLbl:SetText("NPC class")
+    npcClassLbl:SetFont("AINPC_Body")
+    npcClassLbl:SetTextColor(labelColor)
+
+    local npcDropdown = vgui.Create("DComboBox", npcSection)
     npcDropdown:Dock(TOP)
-    npcDropdown:SetTall(24)
-    npcDropdown:DockMargin(0, 0, 0, 12)
-    npcDropdown:SetValue("npc_citizen")
-    local selectedNPCData
-    function npcDropdown:OnSelect(index, value, data)
-        selectedNPCData = data
-        net.Start("GetNPCModel")
-        net.WriteTable(data)
+    npcDropdown:SetTall(26)
+    npcDropdown:DockMargin(0, 2, 0, 8)
+
+    local npcRegistry = list.Get("NPC") or {}
+    local npcIds = {}
+    for id, _ in pairs(npcRegistry) do table.insert(npcIds, id) end
+    table.sort(npcIds)
+    for _, id in ipairs(npcIds) do
+        local data = npcRegistry[id]
+        local label = (data and data.Name) or id
+        npcDropdown:AddChoice(label, id, id == Settings.npcClass)
+    end
+
+    function npcDropdown:OnSelect(_, _, id)
+        Settings.npcClass = id
+        net.Start("AINPC_ModelPreview")
+        net.WriteString(id or "")
         net.SendToServer()
     end
-    for npcId, npcData in pairs(list.Get("NPC")) do
-        npcData.Id = npcId
-        npcDropdown:AddChoice(npcId, npcData)
-    end
-    npcDropdown:ChooseOptionID(1)
-    if not selectedNPCData then
-        local selectedPanel = npcDropdown:GetSelected()
-        selectedNPCData = selectedPanel and selectedPanel.Data
-    end
 
-    -- API key
-    local apiKeyLabel = settingsBody:Add("DLabel")
-    apiKeyLabel:SetText("API Key:")
-    apiKeyLabel:SetContentAlignment(4)
-    apiKeyLabel:SetTall(20)
-    apiKeyLabel:Dock(TOP)
-    apiKeyLabel:DockMargin(0, 0, 0, 4)
-    apiKeyLabel:SetTextColor(labelColor)
+    -- ---- Settings section (right col) ----
+    local settingsSection = Section(rightCol, "Settings")
 
-    local apiKeyEntry = settingsBody:Add("DTextEntry")
-    apiKeyEntry:Dock(TOP)
-    apiKeyEntry:SetTall(24)
-    apiKeyEntry:DockMargin(0, 0, 0, 12)
-    apiKeyEntry:SetText(inputapikey)
+    local personalityLbl = vgui.Create("DLabel", settingsSection)
+    personalityLbl:Dock(TOP)
+    personalityLbl:SetText("Character description")
+    personalityLbl:SetFont("AINPC_Body")
+    personalityLbl:SetTextColor(labelColor)
+    personalityLbl:SetTall(18)
 
-    -- Free API toggle
-    local freeAPIButton = settingsBody:Add("DCheckBoxLabel")
-    freeAPIButton:SetText("Free API")
-    freeAPIButton:SetTall(20)
-    freeAPIButton:Dock(TOP)
-    freeAPIButton:DockMargin(0, 0, 0, 8)
-    freeAPIButton:SetTextColor(labelColor)
-    freeAPIButton.OnChange = function(self, value)
-        apiKeyEntry:SetText(value and "" or apiKeyEntry:GetText())
-        apiKeyEntry:SetEditable(not value)
-    end
+    local personalityHint = vgui.Create("DLabel", settingsSection)
+    personalityHint:Dock(TOP)
+    personalityHint:SetFont("AINPC_Small")
+    personalityHint:SetTextColor(subColor)
+    personalityHint:SetTall(16)
+    personalityHint:SetText("Who are they? How do they act? A grumpy bartender? A paranoid scientist?")
 
-    -- Text-to-speech toggle
-    local TTSButton = settingsBody:Add("DCheckBoxLabel")
-    TTSButton:SetText("Text to Speech")
-    TTSButton:SetTall(20)
-    TTSButton:Dock(TOP)
-    TTSButton:DockMargin(0, 0, 0, 12)
-    TTSButton:SetValue(0)
-    TTSButton:SetTextColor(labelColor)
+    local personalityEntry = vgui.Create("DTextEntry", settingsSection)
+    personalityEntry:Dock(TOP)
+    personalityEntry:SetTall(70)
+    personalityEntry:SetMultiline(true)
+    personalityEntry:DockMargin(0, 4, 0, 10)
+    personalityEntry:SetText(Settings.personality or "")
 
-    -- Generation controls
-    maxTokensSlider = settingsBody:Add("DNumSlider")
-    maxTokensSlider:SetText("Max Tokens")
-    maxTokensSlider.Label:SetTextColor(labelColor)
-    maxTokensSlider:SetTall(48)
-    maxTokensSlider:Dock(TOP)
-    maxTokensSlider:DockMargin(0, 0, 0, 12)
-    maxTokensSlider:SetMin(128)
-    maxTokensSlider:SetMax(4096)
-    maxTokensSlider:SetDecimals(0)
-    maxTokensSlider:SetValue(2048)
+    local keyLabel = vgui.Create("DLabel", settingsSection)
+    keyLabel:Dock(TOP)
+    keyLabel:SetTall(18)
+    keyLabel:SetFont("AINPC_Body")
+    keyLabel:SetTextColor(labelColor)
+    keyLabel:SetText("API Key")
 
-    temperatureSlider = settingsBody:Add("DNumSlider")
-    temperatureSlider:SetText("Temperature")
-    temperatureSlider.Label:SetTextColor(labelColor)
-    temperatureSlider:SetTall(48)
-    temperatureSlider:Dock(TOP)
-    temperatureSlider:DockMargin(0, 0, 0, 12)
-    temperatureSlider:SetMin(0)
-    temperatureSlider:SetMax(2)
-    temperatureSlider:SetDecimals(2)
-    temperatureSlider:SetValue(1)
+    local keyEntry = vgui.Create("DTextEntry", settingsSection)
+    keyEntry:Dock(TOP)
+    keyEntry:SetTall(26)
+    keyEntry:DockMargin(0, 2, 0, 10)
+    keyEntry:SetPlaceholderText("Paste your key here")
 
-    reasoningLabel = settingsBody:Add("DLabel")
-    reasoningLabel:SetText("Reasoning Effort:")
-    reasoningLabel:SetContentAlignment(4)
-    reasoningLabel:SetTall(20)
+    local maxTokSlider = vgui.Create("DNumSlider", settingsSection)
+    maxTokSlider:Dock(TOP)
+    maxTokSlider:SetTall(44)
+    maxTokSlider:DockMargin(0, 0, 0, 4)
+    maxTokSlider:SetText("Max tokens")
+    maxTokSlider.Label:SetTextColor(labelColor)
+    maxTokSlider:SetMin(64)
+    maxTokSlider:SetMax(4096)
+    maxTokSlider:SetDecimals(0)
+    maxTokSlider:SetValue(Settings.max_tokens or 2048)
+
+    local tempSlider = vgui.Create("DNumSlider", settingsSection)
+    tempSlider:Dock(TOP)
+    tempSlider:SetTall(44)
+    tempSlider:DockMargin(0, 0, 0, 4)
+    tempSlider:SetText("Temperature")
+    tempSlider.Label:SetTextColor(labelColor)
+    tempSlider:SetMin(0)
+    tempSlider:SetMax(2)
+    tempSlider:SetDecimals(2)
+    tempSlider:SetValue(Settings.temperature or 1)
+
+    local reasoningLabel = vgui.Create("DLabel", settingsSection)
     reasoningLabel:Dock(TOP)
-    reasoningLabel:DockMargin(0, 12, 0, 4)
-    reasoningLabel:SetVisible(false)
+    reasoningLabel:SetTall(18)
+    reasoningLabel:SetFont("AINPC_Body")
     reasoningLabel:SetTextColor(labelColor)
+    reasoningLabel:SetText("Reasoning effort")
+    reasoningLabel:SetVisible(false)
 
-    reasoningDropdown = settingsBody:Add("DComboBox")
+    local reasoningDropdown = vgui.Create("DComboBox", settingsSection)
     reasoningDropdown:Dock(TOP)
-    reasoningDropdown:SetTall(24)
-    reasoningDropdown:DockMargin(0, 0, 0, 12)
+    reasoningDropdown:SetTall(26)
+    reasoningDropdown:DockMargin(0, 2, 0, 10)
     reasoningDropdown:SetVisible(false)
 
-    local function toTitleCase(value)
-        if not value or value == "" then return "" end
-        return string.upper(string.sub(value, 1, 1)) .. string.sub(value, 2)
+    local ttsLabel = vgui.Create("DLabel", settingsSection)
+    ttsLabel:Dock(TOP)
+    ttsLabel:SetTall(18)
+    ttsLabel:SetFont("AINPC_Body")
+    ttsLabel:SetTextColor(labelColor)
+    ttsLabel:SetText("Text-to-speech")
+
+    local ttsDropdown = vgui.Create("DComboBox", settingsSection)
+    ttsDropdown:Dock(TOP)
+    ttsDropdown:SetTall(26)
+    ttsDropdown:DockMargin(0, 2, 0, 16)
+    local currentTTS = (Settings.enableTTS and Settings.ttsVoice) or "off"
+    ttsDropdown:AddChoice("Off",                          "off",            currentTTS == "off")
+    ttsDropdown:AddChoice("StreamElements (Brian)",       "streamelements", currentTTS == "streamelements")
+    ttsDropdown:AddChoice("SAPI4 Microsoft Sam (legacy)", "sapi4",          currentTTS == "sapi4")
+
+    local spawnBtn = vgui.Create("DButton", settingsSection)
+    spawnBtn:Dock(TOP)
+    spawnBtn:SetTall(48)
+    spawnBtn:SetText("Spawn NPC")
+    spawnBtn:SetFont("AINPC_Header")
+
+    local howTo = vgui.Create("DLabel", settingsSection)
+    howTo:Dock(TOP)
+    howTo:SetTall(48)
+    howTo:DockMargin(0, 10, 0, 0)
+    howTo:SetFont("AINPC_Small")
+    howTo:SetTextColor(subColor)
+    howTo:SetWrap(true)
+    howTo:SetAutoStretchVertical(true)
+    howTo:SetText("After spawning: walk up to the NPC and press E to open a chat window, or just type in chat when you're nearby. Use /say <message> to talk from anywhere.")
+
+    -- =============================================================================
+    -- Reactivity
+    -- =============================================================================
+
+    local currentProviderId = Settings.provider or "groq"
+    local currentModelId = Settings.model or ""
+    local currentReasoning = Settings.reasoning
+
+    local function refreshKeyEntry()
+        local p = providers.get(currentProviderId)
+        if not p then return end
+        keyEntry:SetText(Settings.apiKeys[currentProviderId] or "")
+        keyEntry:SetEditable(true)
+        keyLabel:SetText(p.id == "ollama" and "API Key (optional)" or "API Key")
+        getKeyBtn:SetText("Get " .. (p.id == "ollama" and "Ollama" or "free") .. " key →")
+        getKeyBtn.DoClick = function() gui.OpenURL(p.getKeyUrl) end
+        providerNote:SetText(p.note or "")
     end
 
-    local function clampValue(value, minValue, maxValue)
-        if value == nil then
-            if minValue and maxValue then
-                return math.Clamp((minValue + maxValue) * 0.5, minValue, maxValue)
-            end
-            return minValue or maxValue or 0
+    local function applyModelSettings(modelData)
+        if not istable(modelData) then
+            modelCustomEntry:SetVisible(true)
+            reasoningLabel:SetVisible(false)
+            reasoningDropdown:SetVisible(false)
+            return
         end
 
-        if minValue and value < minValue then value = minValue end
-        if maxValue and value > maxValue then value = maxValue end
-        return value
-    end
-
-    local function applyMaxTokens(range)
-        local limits = range or defaultLimits.max_tokens
-        local minValue = limits.min or defaultLimits.max_tokens.min
-        local maxValue = limits.max or defaultLimits.max_tokens.max
-        local defaultValue = limits.default or defaultLimits.max_tokens.default
-
-        maxTokensSlider:SetMin(minValue)
-        maxTokensSlider:SetMax(maxValue)
-        maxTokensSlider:SetDecimals(0)
-
-        local currentValue = maxTokensSlider:GetValue()
-        if currentValue < minValue or currentValue > maxValue then
-            currentValue = defaultValue
+        local mt = modelData.max_tokens or {}
+        maxTokSlider:SetMin(mt.min or 64)
+        maxTokSlider:SetMax(mt.max or 4096)
+        local curMT = maxTokSlider:GetValue()
+        if curMT < (mt.min or 64) or curMT > (mt.max or 4096) then
+            maxTokSlider:SetValue(mt.default or 2048)
         end
-        maxTokensSlider:SetValue(clampValue(currentValue, minValue, maxValue))
-    end
 
-    local function applyTemperature(range)
-        local limits = range or defaultLimits.temperature
-        local minValue = limits.min or defaultLimits.temperature.min
-        local maxValue = limits.max or defaultLimits.temperature.max
-        local defaultValue = limits.default or defaultLimits.temperature.default
-        local decimals = limits.decimals or 2
-
-        temperatureSlider:SetMin(minValue)
-        temperatureSlider:SetMax(maxValue)
-        temperatureSlider:SetDecimals(decimals)
-
-        local currentValue = temperatureSlider:GetValue()
-        if currentValue < minValue or currentValue > maxValue then
-            currentValue = defaultValue
+        local t = modelData.temperature or {}
+        tempSlider:SetMin(t.min or 0)
+        tempSlider:SetMax(t.max or 2)
+        local curT = tempSlider:GetValue()
+        if curT < (t.min or 0) or curT > (t.max or 2) then
+            tempSlider:SetValue(t.default or 1)
         end
-        temperatureSlider:SetValue(clampValue(currentValue, minValue, maxValue))
+        local locked = (t.min == t.max)
+        tempSlider:SetEnabled(not locked)
+        if locked then tempSlider:SetValue(t.min) end
 
-        local locked = minValue == maxValue
-        temperatureSlider:SetVisible(not locked)
-        temperatureSlider:SetEnabled(not locked)
-        if locked then
-            temperatureSlider:SetValue(minValue)
-        end
-    end
-
-    local function applyReasoning(options)
-        if istable(options) and #options > 0 then
+        if istable(modelData.reasoning) and #modelData.reasoning > 0 then
             reasoningLabel:SetVisible(true)
             reasoningDropdown:SetVisible(true)
             reasoningDropdown:Clear()
-
             local matched = false
-            for idx, effort in ipairs(options) do
-                local label = toTitleCase(effort)
-                reasoningDropdown:AddChoice(label, effort)
-                if effort == currentReasoningChoice then
-                    reasoningDropdown:ChooseOptionID(idx)
-                    matched = true
-                end
+            for i, effort in ipairs(modelData.reasoning) do
+                reasoningDropdown:AddChoice(effort:sub(1,1):upper() .. effort:sub(2), effort, effort == currentReasoning)
+                if effort == currentReasoning then matched = true end
             end
-
             if not matched then
                 reasoningDropdown:ChooseOptionID(1)
-                local selectedPanel = reasoningDropdown:GetSelected()
-                currentReasoningChoice = selectedPanel and selectedPanel.Data or options[1]
+                currentReasoning = modelData.reasoning[1]
             end
         else
             reasoningLabel:SetVisible(false)
             reasoningDropdown:SetVisible(false)
-            reasoningDropdown:Clear()
-            currentReasoningChoice = nil
+            currentReasoning = nil
         end
     end
 
-    local function applyModelSettings(choice)
-        currentModelChoice = choice
-        local info = choice and choice.settings or nil
-        applyMaxTokens(info and info.max_tokens or nil)
-        applyTemperature(info and info.temperature or nil)
-        applyReasoning(info and info.reasoning or nil)
-    end
-
-    local function buildModelChoices(providerData)
-        local choices = {}
-        if not providerData then return choices end
-
-        if providerData.modelOrder and providerData.models then
-            for _, key in ipairs(providerData.modelOrder) do
-                local info = providerData.models[key]
-                if info then
-                    table.insert(choices, {
-                        id = key,
-                        label = info.label or key,
-                        settings = info
-                    })
-                end
-            end
-            return choices
-        end
-
-        if istable(providerData.models) then
-            if #providerData.models > 0 then
-                for _, entry in ipairs(providerData.models) do
-                    if isstring(entry) then
-                        table.insert(choices, { id = entry, label = entry })
-                    elseif istable(entry) then
-                        local id = entry.id or entry.name or entry.label
-                        if id then
-                            table.insert(choices, {
-                                id = id,
-                                label = entry.label or id,
-                                settings = entry
-                            })
-                        end
-                    end
-                end
-            else
-                for key, entry in pairs(providerData.models) do
-                    if istable(entry) then
-                        table.insert(choices, {
-                            id = key,
-                            label = entry.label or key,
-                            settings = entry
-                        })
-                    elseif isstring(entry) then
-                        table.insert(choices, { id = key, label = entry })
-                    end
-                end
-                table.sort(choices, function(a, b) return a.label < b.label end)
-            end
-        end
-
-        return choices
-    end
-
-    local function populateModels(providerId)
-        currentProviderData = providers.get(providerId)
+    local function populateModels()
         modelDropdown:Clear()
+        local order, models = getModelMap(currentProviderId)
+        local p = providers.get(currentProviderId)
 
-        local choices = currentProviderData and buildModelChoices(currentProviderData) or {}
-        if #choices > 0 then
+        if order and #order > 0 then
             modelDropdown:SetVisible(true)
-            modelTextEntry:SetVisible(false)
-            for _, choice in ipairs(choices) do
-                modelDropdown:AddChoice(choice.label, choice)
+            for _, id in ipairs(order) do
+                local m = models[id]
+                if m then
+                    modelDropdown:AddChoice(m.label or id, id, id == currentModelId)
+                end
             end
-            modelDropdown:ChooseOptionID(1)
+            if not currentModelId or not models[currentModelId] then
+                currentModelId = order[1]
+                modelDropdown:ChooseOptionID(1)
+            end
+            modelCustomEntry:SetVisible(p and p.allowCustomModel == true)
+            if p and p.allowCustomModel then
+                modelCustomEntry:SetText(Settings.model or "")
+            end
+            applyModelSettings(models[currentModelId])
         else
             modelDropdown:SetVisible(false)
-            modelTextEntry:SetVisible(true)
-            modelTextEntry:SetValue("")
+            modelCustomEntry:SetVisible(true)
+            modelCustomEntry:SetText(Settings.model or "")
             applyModelSettings(nil)
         end
+
+        local showHost = p and p.requiresHostname == true
+        hostnameLabel:SetVisible(showHost)
+        hostnameEntry:SetVisible(showHost)
     end
 
-    function providerDropdown:OnSelect(index, value, data)
-        local previousProviderId = currentProviderId
-        currentProviderId = data or value
-
-        local isOllama = currentProviderId == "ollama"
-
-        hostnameEntry:SetEditable(isOllama)
-
-        if isOllama then
-            apiKeyLabel:SetText("API Key (optional):")
-            freeAPIButton:SetVisible(false)
-
-            if freeAPIButton:GetChecked() then
-                freeAPIButton:SetChecked(false)
-            else
-                apiKeyEntry:SetEditable(true)
-            end
-        else
-            apiKeyLabel:SetText("API Key:")
-            freeAPIButton:SetVisible(true)
-
-            if not freeAPIButton:GetChecked() then
-                apiKeyEntry:SetEditable(true)
-            end
-
-            if previousProviderId == "ollama" and inputapikey and inputapikey ~= "" then
-                apiKeyEntry:SetText(inputapikey)
-            end
-        end
-
-        populateModels(currentProviderId)
+    function frame:ReloadProviderModels()
+        if currentProviderId == "openrouter" then populateModels() end
     end
 
-    function modelDropdown:OnSelect(index, value, data)
-        if istable(data) then
-            applyModelSettings(data)
-        else
-            applyModelSettings({ id = value })
-        end
+    function providerDropdown:OnSelect(_, _, id)
+        currentProviderId = id
+        Settings.provider = id
+        currentModelId = nil
+        refreshKeyEntry()
+        populateModels()
     end
 
-    function reasoningDropdown:OnSelect(index, value, data)
-        currentReasoningChoice = data or value
+    function modelDropdown:OnSelect(_, _, id)
+        currentModelId = id
+        Settings.model = id
+        local _, models = getModelMap(currentProviderId)
+        applyModelSettings(models[id])
     end
 
-    hostnameEntry:SetEditable(false)
-    populateModels(currentProviderId)
+    function reasoningDropdown:OnSelect(_, _, value)
+        currentReasoning = value
+    end
 
-    -- Create NPC button
-    local createButton = settingsBody:Add("DButton")
-    createButton:SetText("Create NPC")
-    createButton:SetTall(60)
-    createButton:Dock(TOP)
-    createButton:DockMargin(0, 20, 0, 0)
-    createButton.DoClick = function()
-        local enteredKey = apiKeyEntry:GetValue()
-        if currentProviderId ~= "ollama" and not freeAPIButton:GetChecked() then
-            inputapikey = enteredKey
+    -- ---- Spawn ----
+    spawnBtn.DoClick = function()
+        local key = AINPCS.Trim(keyEntry:GetValue() or "")
+        Settings.apiKeys[currentProviderId] = key
+        Settings.personality = personalityEntry:GetValue() or ""
+        Settings.name = nameEntry:GetValue() or ""
+        Settings.hostname = hostnameEntry:GetValue() or ""
+        Settings.max_tokens = math.floor(maxTokSlider:GetValue())
+        Settings.temperature = tempSlider:GetValue()
+        Settings.reasoning = currentReasoning
+
+        local _, ttsKind = ttsDropdown:GetSelected()
+        Settings.enableTTS = ttsKind ~= "off"
+        Settings.ttsVoice = ttsKind ~= "off" and ttsKind or "off"
+
+        local modelId = currentModelId
+        if modelCustomEntry:IsVisible() then
+            local custom = AINPCS.Trim(modelCustomEntry:GetValue() or "")
+            if custom ~= "" then modelId = custom end
         end
+        Settings.model = modelId
 
-        local APIKEY
-        if currentProviderId == "ollama" then
-            APIKEY = enteredKey or ""
-        else
-            APIKEY = freeAPIButton:GetChecked() and
-                "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" or
-                enteredKey
-        end
+        saveSettings(Settings)
 
-        local selectedNPCPanel = npcDropdown:GetSelected()
-        local selectedNPC = selectedNPCPanel and selectedNPCPanel.Data or selectedNPCData
-
-        local chosenModel
-        if modelDropdown:IsVisible() then
-            chosenModel = currentModelChoice and currentModelChoice.id or modelDropdown:GetValue()
-        else
-            chosenModel = modelTextEntry:GetValue()
-        end
-
-        local requestBody = {
-            apiKey = APIKEY,
-            hostname = hostnameEntry:GetValue(),
-            personality = aiLinkEntry:GetValue(),
-            NPCData = selectedNPC,
-            enableTTS = TTSButton:GetChecked(),
-            provider = currentProviderId,
-            model = chosenModel,
-            max_tokens = math.floor(maxTokensSlider:GetValue()),
-        }
-
-        requestBody.reasoning = currentReasoningChoice
-
-        if temperatureSlider:IsVisible() then
-            requestBody.temperature = temperatureSlider:GetValue()
-        end
-
-        AINPCS.DebugPrintTable(requestBody)
-        net.Start("SendNPCInfo")
-        net.WriteTable(requestBody)
+        net.Start("AINPC_SpawnRequest")
+        net.WriteTable({
+            provider    = currentProviderId,
+            apiKey      = key,
+            hostname    = Settings.hostname,
+            class       = Settings.npcClass,
+            personality = Settings.personality,
+            name        = Settings.name,
+            model       = modelId,
+            max_tokens  = Settings.max_tokens,
+            temperature = Settings.temperature,
+            reasoning   = currentReasoning,
+            enableTTS   = Settings.enableTTS,
+            ttsVoice    = Settings.ttsVoice,
+        })
         net.SendToServer()
+
+        frame:Close()
+    end
+
+    -- Initial state
+    refreshKeyEntry()
+    populateModels()
+
+    -- Preview the currently-selected NPC
+    net.Start("AINPC_ModelPreview")
+    net.WriteString(Settings.npcClass or "npc_citizen")
+    net.SendToServer()
+
+    -- Remember the model panel so we can update it when the server replies.
+    AINPCS._ModelPreviewTarget = mp
+
+    if Settings.firstRun then
+        timer.Simple(0.1, ShowOnboarding)
     end
 end
 
-local soundList = {}
-
-net.Receive("RespondNPCModel", function()
+net.Receive("AINPC_ModelPreviewResponse", function()
     local modelPath = net.ReadString()
-    if modelPanel and IsValid(modelPanel) then
-        modelPanel:SetModel(modelPath)
+    local mp = AINPCS._ModelPreviewTarget
+    if modelPath ~= "" and IsValid(mp) then
+        mp:SetModel(modelPath)
     end
-end)
-
--- TODO Convert this to serverside code so that audio can changed to follow NPC
-net.Receive("SayTTS", function()
-    local key = net.ReadString()
-    local text = net.ReadString() -- Read the TTS text from the network
-    local ply = net.ReadEntity() -- Read the player entity from the network
-    text = string.sub(string.Replace(text, " ", "%20"), 1, 1000) -- Replace spaces with "%20" and limit the text length to 100 characters
-
-    -- Play the TTS sound using the provided URL
-    sound.PlayURL(
-        "https://tetyys.com/SAPI4/SAPI4?voice=Sam&pitch=100&speed=150&text=" ..
-            text, "3d", function(sound)
-            if IsValid(sound) then
-                sound:SetPos(ply:GetPos()) -- Set the sound position to the player's position
-                sound:SetVolume(1) -- Set the sound volume to maximum
-                sound:Play() -- Play the sound
-                sound:Set3DFadeDistance(200, 1000) -- Set the 3D sound fade distance
-                soundList[key] = sound -- Store the sound reference in the player entity
-            end
-        end)
-end)
-
-net.Receive("TTSPositionUpdate", function()
-    local key = net.ReadString()
-    local pos = net.ReadVector()
-
-    soundList[key]:SetPos(pos)
 end)

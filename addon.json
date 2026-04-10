@@ -1,7 +1,7 @@
 {
-  "title": "ChatGPT NPCs",
-  "description": "Introducing an addon that empowers you to bring AI NPCs to life, enabling immersive conversations through the dynamic capabilities of ChatGPT and the chat. Im yet to test this in MP so there may be bugs.",
+  "title": "AI NPCs",
+  "description": "Spawn NPCs that talk back. Supports Groq (free), OpenRouter (free models), OpenAI, DeepSeek, and Ollama (self-hosted). Press E on an NPC to open a chat window, or just talk in chat when you're nearby. Walks you through getting a free API key on first launch.",
   "type": "npc",
   "tags": ["fun", "roleplay"],
-  "ignore": [".git/*", "README.md"]
+  "ignore": [".git/*", "README.md", "WORKSHOP_DESCRIPTION.md", "orm.json"]
 }
